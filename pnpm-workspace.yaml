@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+
+# pnpm 10 blocks dependency build scripts by default; only these may run them.
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild

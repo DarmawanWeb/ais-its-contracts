@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/emission.cii.updated.v1.json",
+  "title": "CiiUpdatedV1",
+  "description": "Payload (\"data\") of emission.cii.updated.v1. Year-to-date Carbon Intensity Indicator of a vessel.",
+  "type": "object",
+  "properties": {
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "vesselId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "UUID"
+    },
+    "orgId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ]
+    },
+    "year": { "type": "integer", "minimum": 2000, "maximum": 2200 },
+    "asOf": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "Time of the last segment included"
+    },
+    "distanceNm": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Distance sailed, nm"
+    },
+    "fuelMeTon": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Main engine fuel, t"
+    },
+    "fuelAeTon": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Auxiliary engine fuel, t"
+    },
+    "co2Ton": {
+      "type": "number",
+      "minimum": 0,
+      "description": "CO2 emitted, t"
+    },
+    "attained": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Attained CII, g CO2 / (capacity · nm)"
+    },
+    "required": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Required CII for the year"
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "description": "attained / required"
+    },
+    "grade": {
+      "type": "string",
+      "enum": ["A", "B", "C", "D", "E"],
+      "description": "CII rating grade"
+    },
+    "lastMethod": {
+      "type": "string",
+      "enum": ["telemetry", "first_formula", "holtrop"],
+      "description": "Fuel method of the most recent segment"
+    }
+  },
+  "required": [
+    "mmsi",
+    "vesselId",
+    "orgId",
+    "year",
+    "asOf",
+    "distanceNm",
+    "fuelMeTon",
+    "fuelAeTon",
+    "co2Ton",
+    "attained",
+    "required",
+    "rating",
+    "grade",
+    "lastMethod"
+  ]
+}

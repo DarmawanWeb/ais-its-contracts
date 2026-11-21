@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/notify.email.requested.v1.json",
+  "title": "EmailRequestedV1",
+  "description": "Payload (\"data\") of notify.email.requested.v1. Request to render and send a transactional e-mail.",
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+      "description": "Recipient address"
+    },
+    "template": {
+      "type": "string",
+      "enum": ["password_reset", "account_invite", "alert", "test"],
+      "description": "E-mail template"
+    },
+    "locale": {
+      "type": "string",
+      "enum": ["id", "en"],
+      "description": "Locale of user texts"
+    },
+    "data": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": {},
+      "description": "Template variables, e.g. { link } for password_reset"
+    }
+  },
+  "required": ["to", "template", "locale", "data"]
+}

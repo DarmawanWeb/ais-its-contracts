@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/fleet.vessel.deleted.v1.json",
+  "title": "VesselDeletedV1",
+  "description": "Payload (\"data\") of fleet.vessel.deleted.v1. A vessel was deleted from the fleet registry.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "UUID"
+    },
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "orgId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "required": ["id", "mmsi", "orgId"]
+}

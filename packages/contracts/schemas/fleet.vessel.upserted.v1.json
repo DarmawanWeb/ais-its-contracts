@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/fleet.vessel.upserted.v1.json",
+  "title": "VesselSnapshotV1",
+  "description": "Payload (\"data\") of fleet.vessel.upserted.v1. Latest full snapshot of a vessel (stream FLEET keeps one message per vessel).",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "UUID"
+    },
+    "orgId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ],
+      "description": "Owning organization"
+    },
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "imo": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "flag": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "builtYear": {
+      "anyOf": [
+        { "type": "integer", "minimum": 1800, "maximum": 2200 },
+        { "type": "null" }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "laid_up"],
+      "description": "Vessel status"
+    },
+    "annualVoyagePercentage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Share of the year at sea, percent"
+    },
+    "dimensions": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "CII capacity (DWT or GT per ship type)"
+        },
+        "dwt": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "description": "Deadweight tonnage"
+            },
+            { "type": "null" }
+          ]
+        },
+        "gt": {
+          "anyOf": [
+            { "type": "number", "minimum": 0, "description": "Gross tonnage" },
+            { "type": "null" }
+          ]
+        },
+        "cb": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Block coefficient"
+        },
+        "lwl": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Length on waterline, m"
+        },
+        "b": { "type": "number", "minimum": 0, "description": "Breadth, m" },
+        "t": { "type": "number", "minimum": 0, "description": "Draught, m" },
+        "cwp": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Waterplane area coefficient"
+        },
+        "loa": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Length overall, m"
+        },
+        "lpp": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Length between perpendiculars, m"
+        },
+        "cp": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Prismatic coefficient"
+        },
+        "cm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Midship section coefficient"
+        },
+        "cbnsp": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Block coefficient at service draught"
+        },
+        "bulbousBow": { "type": "boolean" },
+        "cstern": {
+          "type": "number",
+          "description": "Holtrop stern shape coefficient"
+        },
+        "c1": { "type": "number", "description": "Holtrop coefficient c1" },
+        "c2": { "type": "number", "description": "Holtrop coefficient c2" },
+        "c3": { "type": "number", "description": "Holtrop coefficient c3" },
+        "c5": { "type": "number", "description": "Holtrop coefficient c5" },
+        "vs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Service speed, kn"
+        }
+      },
+      "required": [
+        "capacity",
+        "dwt",
+        "gt",
+        "cb",
+        "lwl",
+        "b",
+        "t",
+        "cwp",
+        "loa",
+        "lpp",
+        "cp",
+        "cm",
+        "cbnsp",
+        "bulbousBow",
+        "cstern",
+        "c1",
+        "c2",
+        "c3",
+        "c5",
+        "vs"
+      ],
+      "description": "Vessel dimensions and hull coefficients"
+    },
+    "type": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        "code": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "capacityUnit": {
+          "type": "string",
+          "enum": ["DWT", "GT"],
+          "description": "Capacity unit of the CII reference line"
+        },
+        "a": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Reference line parameter a"
+        },
+        "c": { "type": "number", "description": "Reference line parameter c" },
+        "d": {
+          "type": "object",
+          "properties": {
+            "d1": { "type": "number", "exclusiveMinimum": 0 },
+            "d2": { "type": "number", "exclusiveMinimum": 0 },
+            "d3": { "type": "number", "exclusiveMinimum": 0 },
+            "d4": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "required": ["d1", "d2", "d3", "d4"],
+          "description": "CII rating boundaries as multiples of the required CII"
+        }
+      },
+      "required": ["id", "code", "name", "capacityUnit", "a", "c", "d"],
+      "description": "Ship type"
+    },
+    "fuel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        "code": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "carbonContent": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Carbon content (mass fraction)"
+        },
+        "conversionFactor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Cf, t CO2 per t fuel (MEPC.364(79))"
+        },
+        "density": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Density, t/m³ (= kg/L)"
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "name",
+        "carbonContent",
+        "conversionFactor",
+        "density"
+      ],
+      "description": "Fuel"
+    },
+    "mainEngine": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "UUID"
+            },
+            "name": { "type": "string", "minLength": 1 },
+            "rpm": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Rated speed, rpm"
+            },
+            "powerKw": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Rated power, kW"
+            },
+            "sfoc": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Specific fuel oil consumption, g/kWh"
+            },
+            "quantity": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Number of identical main engines"
+            }
+          },
+          "required": ["id", "name", "rpm", "powerKw", "sfoc", "quantity"],
+          "description": "Main engine"
+        },
+        { "type": "null" }
+      ]
+    },
+    "auxEngines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "UUID"
+          },
+          "name": { "type": "string", "minLength": 1 },
+          "rpm": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Rated speed, rpm"
+          },
+          "powerKw": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Rated power, kW"
+          },
+          "sfoc": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Specific fuel oil consumption, g/kWh"
+          }
+        },
+        "required": ["id", "name", "rpm", "powerKw", "sfoc"],
+        "description": "Auxiliary engine"
+      }
+    },
+    "auxEngineQuantity": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "firstFuelFormula": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "description": "UUID"
+            },
+            "mainEngineFormula": { "type": "string", "minLength": 1 },
+            "auxiliaryEngineFormula": { "type": "string", "minLength": 1 }
+          },
+          "required": ["id", "mainEngineFormula", "auxiliaryEngineFormula"],
+          "description": "First fuel formula (safe expressions of speedKnot)"
+        },
+        { "type": "null" }
+      ]
+    },
+    "portIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        "description": "UUID"
+      }
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+    }
+  },
+  "required": [
+    "id",
+    "orgId",
+    "mmsi",
+    "imo",
+    "name",
+    "flag",
+    "builtYear",
+    "status",
+    "annualVoyagePercentage",
+    "dimensions",
+    "type",
+    "fuel",
+    "mainEngine",
+    "auxEngines",
+    "auxEngineQuantity",
+    "firstFuelFormula",
+    "portIds",
+    "updatedAt"
+  ]
+}

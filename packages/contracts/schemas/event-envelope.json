@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/event-envelope.json",
+  "title": "EventEnvelope",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+      "description": "Event id (UUID v7); also the Nats-Msg-Id header"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+\\.v[1-9]\\d*$",
+      "description": "Event type, e.g. \"ais.position.recorded.v1\""
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SERVICE_NAME of the producer"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "When the event was produced"
+    },
+    "subject": {
+      "description": "Entity key: mmsi, vesselId, …",
+      "type": "string",
+      "minLength": 1
+    },
+    "traceparent": {
+      "description": "W3C trace context of the producer",
+      "type": "string",
+      "pattern": "^[\\da-f]{2}-[\\da-f]{32}-[\\da-f]{16}-[\\da-f]{2}$"
+    },
+    "data": {}
+  },
+  "required": ["id", "type", "source", "time", "data"],
+  "description": "Envelope of every NATS message (spec 7.1); \"data\" is validated with the schema of \"type\"."
+}

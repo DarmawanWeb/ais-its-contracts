@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/audit.recorded.v1.json",
+  "title": "AuditRecordedV1",
+  "description": "Payload (\"data\") of audit.recorded.v1. An action recorded for the central audit log.",
+  "type": "object",
+  "properties": {
+    "actorType": {
+      "type": "string",
+      "enum": ["user", "api_key", "system"],
+      "description": "Kind of actor that performed the action"
+    },
+    "actorId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ],
+      "description": "User or API key id; null for the system"
+    },
+    "orgId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ]
+    },
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+$",
+      "description": "Audited action \"<resource>.<verb>\", e.g. \"vessel.update\""
+    },
+    "targetType": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }],
+      "description": "e.g. \"vessel\""
+    },
+    "targetId": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "ip": {
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "userAgent": { "type": ["string", "null"] },
+    "meta": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": {},
+      "description": "Action details"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+    }
+  },
+  "required": [
+    "actorType",
+    "actorId",
+    "orgId",
+    "action",
+    "targetType",
+    "targetId",
+    "ip",
+    "userAgent",
+    "meta",
+    "at"
+  ]
+}

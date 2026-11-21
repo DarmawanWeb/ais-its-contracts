@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/alert.raised.v1.json",
+  "title": "AlertRaisedV1",
+  "description": "Payload (\"data\") of alert.raised.v1. An alert raised by ais-processor (ews) or detection.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "Alert id (also the inbox id)"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["ews", "transhipment", "anomaly", "dark", "geofence", "fishing"],
+      "description": "Alert type"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "critical"],
+      "description": "Alert severity"
+    },
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "relatedMmsi": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 100000000,
+          "maximum": 999999999,
+          "description": "Maritime Mobile Service Identity (9 digits)"
+        },
+        { "type": "null" }
+      ],
+      "description": "Second vessel involved (e.g. transhipment)"
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "message": { "type": "string" },
+    "lat": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90,
+          "description": "WGS84 latitude in degrees"
+        },
+        { "type": "null" }
+      ]
+    },
+    "lon": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "WGS84 longitude in degrees"
+        },
+        { "type": "null" }
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+    },
+    "dedupKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Open alerts with the same key are merged, e.g. \"ews:<mmsi>\""
+    },
+    "zoneId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ]
+    },
+    "data": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": {},
+      "description": "Detector specific details"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "severity",
+    "mmsi",
+    "relatedMmsi",
+    "title",
+    "message",
+    "lat",
+    "lon",
+    "occurredAt",
+    "dedupKey",
+    "zoneId",
+    "data"
+  ]
+}

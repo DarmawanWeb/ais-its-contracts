@@ -1,0 +1,148 @@
+{
+  "name": "@darmawanweb/seemp-contracts",
+  "version": "0.1.0",
+  "description": "Isomorphic contracts of the SEEMP platform: event envelope and payload schemas, NATS streams and subjects, roles and permissions, realtime protocol, API problem details and domain constants.",
+  "keywords": [
+    "seemp",
+    "cii",
+    "ais",
+    "contracts",
+    "zod",
+    "nats",
+    "asyncapi"
+  ],
+  "license": "UNLICENSED",
+  "author": "DarmawanWeb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DarmawanWeb/seemp-contracts.git",
+    "directory": "packages/contracts"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./events": {
+      "import": {
+        "types": "./dist/events/index.d.ts",
+        "default": "./dist/events/index.js"
+      },
+      "require": {
+        "types": "./dist/events/index.d.cts",
+        "default": "./dist/events/index.cjs"
+      }
+    },
+    "./auth": {
+      "import": {
+        "types": "./dist/auth/index.d.ts",
+        "default": "./dist/auth/index.js"
+      },
+      "require": {
+        "types": "./dist/auth/index.d.cts",
+        "default": "./dist/auth/index.cjs"
+      }
+    },
+    "./domain": {
+      "import": {
+        "types": "./dist/domain/index.d.ts",
+        "default": "./dist/domain/index.js"
+      },
+      "require": {
+        "types": "./dist/domain/index.d.cts",
+        "default": "./dist/domain/index.cjs"
+      }
+    },
+    "./realtime": {
+      "import": {
+        "types": "./dist/realtime/index.d.ts",
+        "default": "./dist/realtime/index.js"
+      },
+      "require": {
+        "types": "./dist/realtime/index.d.cts",
+        "default": "./dist/realtime/index.cjs"
+      }
+    },
+    "./api": {
+      "import": {
+        "types": "./dist/api/index.d.ts",
+        "default": "./dist/api/index.js"
+      },
+      "require": {
+        "types": "./dist/api/index.d.cts",
+        "default": "./dist/api/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "events": [
+        "./dist/events/index.d.ts"
+      ],
+      "auth": [
+        "./dist/auth/index.d.ts"
+      ],
+      "domain": [
+        "./dist/domain/index.d.ts"
+      ],
+      "realtime": [
+        "./dist/realtime/index.d.ts"
+      ],
+      "api": [
+        "./dist/api/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.build.json --noEmit",
+    "clean": "node -e \"for (const p of ['dist', 'coverage']) require('node:fs').rmSync(p, { recursive: true, force: true })\"",
+    "schemas": "tsx scripts/generate-artifacts.ts",
+    "schemas:check": "tsx scripts/generate-artifacts.ts --check",
+    "check:package": "node scripts/smoke-dist.mjs && publint --strict && attw --pack .",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "uuid": "^14.0.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@types/node": "^24.19.2",
+    "@vitest/coverage-v8": "^4.1.12",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "prettier": "^3.10.1",
+    "publint": "^0.3.25",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.12"
+  }
+}

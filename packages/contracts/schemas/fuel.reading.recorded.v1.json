@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seemp.dev/schemas/events/fuel.reading.recorded.v1.json",
+  "title": "FuelReadingRecordedV1",
+  "description": "Payload (\"data\") of fuel.reading.recorded.v1. A fuel consumption reading accepted by the telemetry service.",
+  "type": "object",
+  "properties": {
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "Reading time; end of the measured period when periodStart is set"
+    },
+    "periodStart": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+          "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+        },
+        { "type": "null" }
+      ],
+      "description": "Start of the measured period, null when unknown"
+    },
+    "fuelMeTon": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Main engine fuel consumed, metric tonnes"
+    },
+    "fuelAeTon": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Auxiliary engine fuel consumed, metric tonnes"
+    },
+    "deviceId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ],
+      "description": "Reporting device, if any"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["device", "mqtt", "api", "manual", "import"],
+      "description": "Origin of the fuel reading"
+    }
+  },
+  "required": [
+    "mmsi",
+    "time",
+    "periodStart",
+    "fuelMeTon",
+    "fuelAeTon",
+    "deviceId",
+    "source"
+  ]
+}
