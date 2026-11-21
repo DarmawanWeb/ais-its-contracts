@@ -10,7 +10,6 @@ import {
   PredictedNavStatusSchema,
   SogSchema,
 } from '../../domain/ais.js';
-import { EwsStatusSchema } from '../../domain/ews.js';
 import { LatitudeSchema, LongitudeSchema } from '../../domain/geo.js';
 
 /** Payload of `ais.raw.received.v1`: one normalized AIS position report. */
@@ -63,7 +62,7 @@ export const PreviousPositionSchema = z
 /** The previously recorded position of a vessel. */
 export type PreviousPosition = z.infer<typeof PreviousPositionSchema>;
 
-/** Payload of `ais.position.recorded.v1`: an enriched, persisted position. */
+/** Payload of `ais.position.recorded.v1`: an enriched, persisted position (AIS data only). */
 export const AisPositionRecordedV1Schema = z
   .object({
     mmsi: MmsiSchema,
@@ -76,23 +75,17 @@ export const AisPositionRecordedV1Schema = z
     hdg: HeadingSchema,
     navstatus: NavStatusSchema,
     predictedNavstatus: PredictedNavStatusSchema,
-    ewsStatus: EwsStatusSchema,
     coastDistanceM: z
       .number()
       .nonnegative()
       .nullable()
       .describe('Distance to the Indonesian coastline in meters'),
-    pipelineDistanceM: z
-      .number()
-      .nonnegative()
-      .nullable()
-      .describe('Distance to the nearest pipeline in meters'),
     previous: PreviousPositionSchema.nullable(),
   })
   .meta({
     title: 'AisPositionRecordedV1',
     description:
-      'A position recorded by the ais-processor, enriched with predicted navstatus, EWS status and distances, plus the previous position of the vessel.',
+      'A position recorded by the ais-processor, enriched with the predicted navstatus and the coast distance, plus the previous position of the vessel. It carries no safety fields: EWS and collision risk are computed by the safety service (SafetyVesselStateV1).',
   });
 
 /** Payload of `ais.position.recorded.v1`. */

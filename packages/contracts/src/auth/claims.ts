@@ -13,10 +13,10 @@ import { parseRoles } from './roles.js';
  */
 export const AccessTokenClaimsSchema = z
   .object({
-    iss: z.string().min(1).describe('Issuer, "seemp-auth" by default'),
+    iss: z.string().min(1).describe('Issuer, "ais-its-auth" by default'),
     aud: z
       .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
-      .describe('Audience, "seemp-api" by default'),
+      .describe('Audience, "ais-its-api" by default'),
     sub: UuidSchema.describe('User id'),
     sid: UuidSchema.describe('Session id (refresh token family)'),
     org: UuidSchema.nullable().describe('Active organization id'),

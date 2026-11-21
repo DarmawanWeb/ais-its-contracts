@@ -22,6 +22,16 @@ export function isApiKeyScope(value: unknown): value is ApiKeyScope {
   return API_KEY_SCOPES.some((scope) => scope === value);
 }
 
+/**
+ * The known scopes among `values`, deduplicated, in input order. Unknown
+ * scopes (granted by a newer auth service) are dropped, never rejected, so
+ * consumers on an older contracts version keep working (forward compatible,
+ * like access token roles).
+ */
+export function parseScopes(values: readonly string[]): ApiKeyScope[] {
+  return [...new Set(values.filter(isApiKeyScope))];
+}
+
 /** Alphabet of the API key id and secret (base62: digits, upper, lower). */
 export const BASE62_ALPHABET =
   '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -131,7 +141,10 @@ export const ApiKeyIntrospectionResultSchema = z.discriminatedUnion('active', [
     active: z.literal(true),
     keyId: UuidSchema,
     orgId: UuidSchema,
-    scopes: z.array(ApiKeyScopeSchema),
+    scopes: z
+      .array(z.string())
+      .transform((values) => parseScopes(values))
+      .describe('Granted scopes; unknown (newer) scopes are dropped'),
     name: z.string(),
   }),
   z.object({ active: z.literal(false) }),

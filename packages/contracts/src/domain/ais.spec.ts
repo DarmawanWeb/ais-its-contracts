@@ -15,13 +15,12 @@ import {
 } from './ais.js';
 import {
   ALERT_SEVERITIES,
-  ALERT_TYPE_LABELS,
-  ALERT_TYPES,
   compareAlertSeverity,
   isSeverityAtLeast,
 } from './alerts.js';
 import {
   classifyEwsStatus,
+  EWS_DEFAULT_THRESHOLDS,
   EWS_STATUS,
   EWS_STATUS_LABELS,
   EWS_STATUSES,
@@ -111,11 +110,20 @@ describe('EWS', () => {
     [10, 5, 3],
     [Number.NaN, 1, 3],
   ])(
-    'classifies %s m with navstatus %s as %s (legacy checkShipStatus)',
-    (distance, navstatus, expected) => {
-      expect(classifyEwsStatus(distance, navstatus)).toBe(expected);
+    'classifies %s m with predicted navstatus %s as %s (legacy checkShipStatus)',
+    (distance, predictedNavstatus, expected) => {
+      expect(classifyEwsStatus(distance, predictedNavstatus)).toBe(expected);
     },
   );
+
+  it('classifies with configured thresholds (EWS_DANGER_M / EWS_WARNING_M)', () => {
+    expect(EWS_DEFAULT_THRESHOLDS).toEqual({ dangerM: 500, warningM: 1750 });
+    const thresholds = { dangerM: 300, warningM: 1000 };
+    expect(classifyEwsStatus(299, 1, thresholds)).toBe(0);
+    expect(classifyEwsStatus(300, 1, thresholds)).toBe(1);
+    expect(classifyEwsStatus(1000, 1, thresholds)).toBe(3);
+    expect(classifyEwsStatus(100, 0, thresholds)).toBe(3);
+  });
 
   it('maps EWS statuses to alert severities', () => {
     expect(ewsAlertSeverity(0)).toBe('critical');
@@ -136,8 +144,7 @@ describe('alerts and zones', () => {
     expect(isSeverityAtLeast('warning', 'warning')).toBe(true);
   });
 
-  it('labels every alert type and zone kind', () => {
-    expect(Object.keys(ALERT_TYPE_LABELS)).toEqual([...ALERT_TYPES]);
+  it('labels every zone kind', () => {
     expect(Object.keys(ZONE_KIND_LABELS)).toEqual([...ZONE_KINDS]);
   });
 });

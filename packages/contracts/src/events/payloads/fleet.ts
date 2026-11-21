@@ -50,6 +50,14 @@ export const VesselTypeSnapshotSchema = z
     capacityUnit: CapacityUnitSchema,
     a: z.number().positive().describe('Reference line parameter a'),
     c: z.number().describe('Reference line parameter c'),
+    capacityFixed: z
+      .number()
+      .positive()
+      .nullable()
+      .optional()
+      .describe(
+        'Regulation-fixed CII capacity of the size band, e.g. 279 000 for bulk carriers of 279 000 DWT and above (MEPC.353(78)); used instead of dimensions.capacity when set',
+      ),
     d: DdVectorSchema,
   })
   .describe('Ship type');

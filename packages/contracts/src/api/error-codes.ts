@@ -32,7 +32,11 @@ export const ERROR_DEFINITIONS = {
   API_KEY_NOT_FOUND: { status: 404, title: 'API key not found' },
   DEVICE_NOT_FOUND: { status: 404, title: 'Device not found' },
   ZONE_NOT_FOUND: { status: 404, title: 'Zone not found' },
-  DETECTION_NOT_FOUND: { status: 404, title: 'Detection not found' },
+  SAFETY_EVENT_NOT_FOUND: { status: 404, title: 'Safety event not found' },
+  SURVEILLANCE_EVENT_NOT_FOUND: {
+    status: 404,
+    title: 'Surveillance event not found',
+  },
   ALERT_NOT_FOUND: { status: 404, title: 'Alert not found' },
   ALERT_RULE_NOT_FOUND: { status: 404, title: 'Alert rule not found' },
   CONFLICT: { status: 409, title: 'Conflict' },

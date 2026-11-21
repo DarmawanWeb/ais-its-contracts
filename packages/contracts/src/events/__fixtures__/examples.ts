@@ -15,9 +15,14 @@ export const EXAMPLE_IDS = {
   device: '01a1f8c2-54da-749e-ac81-3a1b2c3d4e5f',
   alert: '01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5b',
   user: '01a1f8c2-54db-7a10-8b21-1d2e3f4a5b6c',
+  zone: '01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e',
 } as const;
 
-/** A realistic, valid payload of every event type (Batam strait bulk carrier). */
+/**
+ * A realistic, valid payload of every event type: a bulk carrier recorded in
+ * the Batam strait and later predicted at anchor near the subsea pipeline of
+ * the legacy `data/pipeline.json` (KP 27–29).
+ */
 export const EVENT_EXAMPLES: EventPayloadMap = {
   'ais.raw.received.v1': {
     source: 'batam',
@@ -44,9 +49,7 @@ export const EVENT_EXAMPLES: EventPayloadMap = {
     hdg: 75,
     navstatus: 0,
     predictedNavstatus: 0,
-    ewsStatus: 3,
     coastDistanceM: 2380.5,
-    pipelineDistanceM: 5120.2,
     previous: {
       time: '2026-11-20T08:29:00.000Z',
       lat: 1.1902,
@@ -106,6 +109,7 @@ export const EVENT_EXAMPLES: EventPayloadMap = {
       capacityUnit: 'DWT',
       a: 4745,
       c: 0.622,
+      capacityFixed: null,
       d: { d1: 0.86, d2: 0.94, d3: 1.06, d4: 1.18 },
     },
     fuel: {
@@ -147,6 +151,43 @@ export const EVENT_EXAMPLES: EventPayloadMap = {
     mmsi: 525005223,
     orgId: EXAMPLE_IDS.org,
   },
+  'geo.zone.upserted.v1': {
+    id: EXAMPLE_IDS.zone,
+    orgId: null,
+    code: 'pipeline-kp27-kp29',
+    name: 'Subsea pipeline KP 27-29',
+    kind: 'pipeline',
+    geometry: {
+      type: 'LineString',
+      coordinates: [
+        [112.719384869178, -6.87197219605424],
+        [112.719433852143, -6.86293886272091],
+        [112.719446655722, -6.85389719605424],
+      ],
+    },
+    bufferM: 1750,
+    active: true,
+    alertOnEnter: false,
+    properties: {
+      kpNames: ['KP 29.200', 'KP 28.200', 'KP 27.200'],
+      provenance: 'legacy data/pipeline.json',
+    },
+    updatedAt: '2026-11-20T06:00:00.000Z',
+  },
+  'geo.zone.deleted.v1': {
+    id: EXAMPLE_IDS.zone,
+    orgId: null,
+  },
+  'safety.vessel_state.updated.v1': {
+    mmsi: 525005223,
+    time: '2026-11-20T08:31:00.000Z',
+    ewsStatus: 0,
+    pipelineDistanceM: 312.4,
+    nearestPipelineZoneId: EXAMPLE_IDS.zone,
+    collisionRisk: 'low',
+    closestEncounter: { otherMmsi: 525019876, cpaNm: 0.82, tcpaMin: 14.5 },
+    methodIds: ['ews.status', 'collision.cpa-tcpa'],
+  },
   'emission.cii.updated.v1': {
     mmsi: 525005223,
     vesselId: EXAMPLE_IDS.vessel,
@@ -166,17 +207,20 @@ export const EVENT_EXAMPLES: EventPayloadMap = {
   'alert.raised.v1': {
     id: EXAMPLE_IDS.alert,
     type: 'ews',
+    domain: 'safety',
     severity: 'critical',
     mmsi: 525005223,
     relatedMmsi: null,
-    title: 'Anchored within 500 m of the pipeline',
-    message: 'KM Sinar Batam reports at anchor 312 m from the pipeline.',
-    lat: 1.1301,
-    lon: 104.0305,
+    title: 'At anchor within 500 m of the pipeline',
+    message:
+      'KM Sinar Batam is predicted at anchor 312 m from the pipeline (KP 28.200).',
+    lat: -6.8629,
+    lon: 112.7166,
     occurredAt: '2026-11-20T08:31:00.000Z',
-    dedupKey: 'ews:525005223',
-    zoneId: null,
-    data: { ewsStatus: 0, pipelineDistanceM: 312.4, navstatus: 1 },
+    dedupKey: `ews:525005223:${EXAMPLE_IDS.zone}`,
+    zoneId: EXAMPLE_IDS.zone,
+    methodId: 'ews.status',
+    data: { ewsStatus: 0, pipelineDistanceM: 312.4, predictedNavstatus: 1 },
   },
   'notify.email.requested.v1': {
     to: 'operator@example.com',

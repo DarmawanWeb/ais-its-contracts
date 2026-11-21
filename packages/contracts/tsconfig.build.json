@@ -6,6 +6,11 @@
     // (TextEncoder/TextDecoder). No Node.js types, so Node-only APIs fail to compile.
     "lib": ["ES2023", "DOM"],
     "types": [],
+    // No decorators in contracts. Keeping decorator metadata off also stops tsup
+    // from routing the build through @swc/core (installed for the NestJS kit),
+    // whose keepNames output breaks tsup's code-split CommonJS chunks.
+    "experimentalDecorators": false,
+    "emitDecoratorMetadata": false,
     "rootDir": "src",
     "outDir": "dist"
   },

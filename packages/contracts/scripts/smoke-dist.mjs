@@ -6,8 +6,16 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const NAME = '@darmawanweb/seemp-contracts';
-const SUBPATHS = ['', '/events', '/auth', '/domain', '/realtime', '/api'];
+const NAME = '@darmawanweb/ais-its-contracts';
+const SUBPATHS = [
+  '',
+  '/events',
+  '/auth',
+  '/domain',
+  '/realtime',
+  '/api',
+  '/references',
+];
 
 for (const subpath of SUBPATHS) {
   const specifier = `${NAME}${subpath}`;
@@ -57,6 +65,25 @@ for (const [format, contracts] of [
   assert.equal(
     contracts.tileRoomForPosition(106.8456, -6.2088),
     'tile:6:50:33',
+  );
+  assert.equal(
+    contracts.subjects.safetyState(525005223),
+    'safety.state.v1.525005223',
+    `${format}: safety subject`,
+  );
+  assert.equal(
+    contracts.ALERT_TYPES.collision.domain,
+    'safety',
+    `${format}: alert type registry`,
+  );
+  assert.ok(Array.isArray(contracts.METHODS), `${format}: methodology catalog`);
+  assert.equal(
+    contracts.validateCatalog({
+      references: contracts.REFERENCES,
+      methods: contracts.METHODS,
+    }).success,
+    true,
+    `${format}: shipped catalog is valid`,
   );
 }
 

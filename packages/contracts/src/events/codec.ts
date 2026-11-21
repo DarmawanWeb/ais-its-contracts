@@ -35,19 +35,23 @@ export interface MakeEnvelopeInput<Type extends EventType> {
 
 /**
  * Entity key of a payload used as the default envelope `subject`: the MMSI
- * for vessel-centric events, the vessel id for fleet events, the recipient
- * for e-mails and the target for audit records (when any).
+ * for vessel-centric events, the vessel id for fleet events, the zone id for
+ * geo events, the recipient for e-mails and the target for audit records
+ * (when any).
  */
 export function eventEntityKey(event: AnyEventData): string | undefined {
   switch (event.type) {
     case EVENT_TYPES.AIS_RAW_RECEIVED:
     case EVENT_TYPES.AIS_POSITION_RECORDED:
     case EVENT_TYPES.FUEL_READING_RECORDED:
+    case EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED:
     case EVENT_TYPES.EMISSION_CII_UPDATED:
     case EVENT_TYPES.ALERT_RAISED:
       return String(event.data.mmsi);
     case EVENT_TYPES.FLEET_VESSEL_UPSERTED:
     case EVENT_TYPES.FLEET_VESSEL_DELETED:
+    case EVENT_TYPES.GEO_ZONE_UPSERTED:
+    case EVENT_TYPES.GEO_ZONE_DELETED:
       return event.data.id;
     case EVENT_TYPES.NOTIFY_EMAIL_REQUESTED:
       return event.data.to;

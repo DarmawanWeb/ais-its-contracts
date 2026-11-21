@@ -11,8 +11,11 @@ import {
   CiiUpdatedV1Schema,
   EmailRequestedV1Schema,
   FuelReadingRecordedV1Schema,
+  SafetyVesselStateV1Schema,
   VesselDeletedV1Schema,
   VesselSnapshotV1Schema,
+  ZoneDeletedV1Schema,
+  ZoneSnapshotV1Schema,
 } from './payloads/index.js';
 import { EVENT_TYPES, type EventType, isEventType } from './types.js';
 
@@ -23,6 +26,9 @@ export const EVENT_SCHEMAS = {
   [EVENT_TYPES.FUEL_READING_RECORDED]: FuelReadingRecordedV1Schema,
   [EVENT_TYPES.FLEET_VESSEL_UPSERTED]: VesselSnapshotV1Schema,
   [EVENT_TYPES.FLEET_VESSEL_DELETED]: VesselDeletedV1Schema,
+  [EVENT_TYPES.GEO_ZONE_UPSERTED]: ZoneSnapshotV1Schema,
+  [EVENT_TYPES.GEO_ZONE_DELETED]: ZoneDeletedV1Schema,
+  [EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED]: SafetyVesselStateV1Schema,
   [EVENT_TYPES.EMISSION_CII_UPDATED]: CiiUpdatedV1Schema,
   [EVENT_TYPES.ALERT_RAISED]: AlertRaisedV1Schema,
   [EVENT_TYPES.NOTIFY_EMAIL_REQUESTED]: EmailRequestedV1Schema,

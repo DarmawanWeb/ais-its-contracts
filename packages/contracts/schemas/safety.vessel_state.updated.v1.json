@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ais-its:schema:events:safety.vessel_state.updated.v1",
+  "title": "SafetyVesselStateV1",
+  "description": "Payload (\"data\") of safety.vessel_state.updated.v1. Latest navigational safety state of a vessel: pipeline EWS status and collision risk (stream SAFETY keeps one message per vessel). Published on every change and at most every SAFETY_STATE_HEARTBEAT_S otherwise.",
+  "type": "object",
+  "properties": {
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "Time of the position the state was evaluated for"
+    },
+    "ewsStatus": {
+      "anyOf": [
+        { "type": "number", "const": 0 },
+        { "type": "number", "const": 1 },
+        { "type": "number", "const": 3 }
+      ],
+      "description": "Pipeline EWS status: 0 danger, 1 warning, 3 safe"
+    },
+    "pipelineDistanceM": {
+      "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
+      "description": "Distance to the nearest active pipeline zone in meters; null when none is known"
+    },
+    "nearestPipelineZoneId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ],
+      "description": "Pipeline zone the distance refers to"
+    },
+    "collisionRisk": {
+      "type": "string",
+      "enum": ["none", "low", "medium", "high"],
+      "description": "Collision risk band from CPA / TCPA: none, low, medium, high"
+    },
+    "closestEncounter": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "otherMmsi": {
+              "type": "integer",
+              "minimum": 100000000,
+              "maximum": 999999999,
+              "description": "The other vessel of the encounter"
+            },
+            "cpaNm": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Distance at the closest point of approach (CPA), nm"
+            },
+            "tcpaMin": {
+              "type": "number",
+              "description": "Time to the closest point of approach (TCPA), minutes"
+            }
+          },
+          "required": ["otherMmsi", "cpaNm", "tcpaMin"],
+          "description": "Closest encounter with another vessel (CPA / TCPA)"
+        },
+        { "type": "null" }
+      ]
+    },
+    "methodIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+        "description": "Method id of the methodology catalog, e.g. \"cii.attained\""
+      },
+      "description": "Methodology catalog ids of the methods behind the state"
+    }
+  },
+  "required": [
+    "mmsi",
+    "time",
+    "ewsStatus",
+    "pipelineDistanceM",
+    "nearestPipelineZoneId",
+    "collisionRisk",
+    "closestEncounter",
+    "methodIds"
+  ]
+}

@@ -4,7 +4,10 @@
  * - `schemas/<event type>.json` — JSON Schema (draft 2020-12) of every event
  *   payload, plus `schemas/event-envelope.json`;
  * - `asyncapi.json` — AsyncAPI 3.0 document (channels, messages, operations);
- * - the catalog tables of `README.md` (events, streams, consumers, permissions).
+ * - `schemas/methodology.{references,methods}.json` — JSON Schemas of the
+ *   methodology catalog files `docs/references/*.json`;
+ * - the catalog tables of `README.md` (events, streams, consumers, alert types,
+ *   permissions).
  *
  * Usage: `tsx scripts/generate-artifacts.ts [--check]`. With `--check` nothing
  * is written and the exit code is 1 when an artifact is missing or outdated.
@@ -13,10 +16,10 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { format, resolveConfig } from 'prettier';
 import * as z from 'zod';
 
 import { buildAsyncApiDocument } from './lib/asyncapi.js';
+import { prettify as prettifyFile } from './lib/format.js';
 import { jsonSchemaFiles } from './lib/json-schemas.js';
 import {
   README_SECTIONS,
@@ -28,11 +31,8 @@ const SCHEMAS_DIR = 'schemas';
 
 const PackageJsonSchema = z.object({ version: z.string().min(1) });
 
-async function prettify(relativePath: string, text: string): Promise<string> {
-  const filepath = path.join(PACKAGE_DIR, relativePath);
-  const options = (await resolveConfig(filepath)) ?? {};
-  return format(text, { ...options, filepath });
-}
+const prettify = (relativePath: string, text: string): Promise<string> =>
+  prettifyFile(path.join(PACKAGE_DIR, relativePath), text);
 
 async function readIfExists(relativePath: string): Promise<string | null> {
   try {

@@ -32,8 +32,9 @@ device:manage     ✓ ✓ · · ·
 cii:read          ✓ ✓ ✓ · ✓
 seemp:read        ✓ ✓ ✓ · ✓
 seemp:simulate    ✓ ✓ ✓ · ·
-detection:read    ✓ ✓ ✓ ✓ ✓
-detection:review  ✓ · · ✓ ·
+safety:read           ✓ ✓ ✓ ✓ ✓
+surveillance:read     ✓ ✓ ✓ ✓ ✓
+surveillance:review   ✓ · · ✓ ·
 zone:read         ✓ ✓ ✓ ✓ ✓
 zone:write        ✓ ✓ · ✓ ·
 alert:read        ✓ ✓ ✓ ✓ ✓
@@ -123,7 +124,8 @@ describe('permissionsForRoles', () => {
       ...ROLE_PERMISSIONS.viewer,
     ]);
     expect(granted).toEqual(expected);
-    expect(granted.has('detection:review')).toBe(true);
+    expect(granted.has('surveillance:review')).toBe(true);
+    expect(granted.has('safety:read')).toBe(true);
     expect(granted.has('cii:read')).toBe(true);
     expect(granted.has('vessel:write')).toBe(false);
   });

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/fuel.reading.recorded.v1.json",
+  "$id": "urn:ais-its:schema:events:fuel.reading.recorded.v1",
   "title": "FuelReadingRecordedV1",
   "description": "Payload (\"data\") of fuel.reading.recorded.v1. A fuel consumption reading accepted by the telemetry service.",
   "type": "object",

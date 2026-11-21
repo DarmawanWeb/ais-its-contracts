@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ais-its:schema:methodology:methods",
+  "title": "Methodology methods",
+  "description": "docs/references/methods.json of the methodology catalog (spec 17), shipped as METHODS by @darmawanweb/ais-its-contracts/references.",
+  "anyOf": [
+    { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+    {
+      "type": "object",
+      "properties": {
+        "$schema": { "type": "string" },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+      },
+      "required": ["methods"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "description": "Method id of the methodology catalog, e.g. \"cii.attained\""
+        },
+        "domain": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Domain of the method, e.g. emission, safety, surveillance",
+          "examples": [
+            "ais",
+            "emission",
+            "seemp",
+            "telemetry",
+            "geo",
+            "safety",
+            "surveillance"
+          ]
+        },
+        "name": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Bahasa Indonesia"
+            },
+            "en": { "type": "string", "minLength": 1, "description": "English" }
+          },
+          "required": ["id", "en"],
+          "description": "Text in Bahasa Indonesia and English"
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Bahasa Indonesia"
+            },
+            "en": { "type": "string", "minLength": 1, "description": "English" }
+          },
+          "required": ["id", "en"],
+          "description": "Text in Bahasa Indonesia and English"
+        },
+        "formulaLatex": {
+          "default": null,
+          "description": "Equation in LaTeX (rendered with KaTeX); null for rules without one",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "variables": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Symbol as written in formulaLatex"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Bahasa Indonesia"
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "English"
+                  }
+                },
+                "required": ["id", "en"],
+                "description": "Text in Bahasa Indonesia and English"
+              },
+              "unit": {
+                "default": null,
+                "description": "Unit, e.g. \"nm\" or \"g/kWh\"; null when dimensionless",
+                "anyOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "required": ["symbol", "name"],
+            "description": "Variable of a method"
+          }
+        },
+        "constants": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Symbol as written in formulaLatex"
+              },
+              "name": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Bahasa Indonesia"
+                  },
+                  "en": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "English"
+                  }
+                },
+                "required": ["id", "en"],
+                "description": "Text in Bahasa Indonesia and English"
+              },
+              "value": {
+                "anyOf": [
+                  { "type": "number" },
+                  { "type": "string", "minLength": 1 }
+                ],
+                "description": "Value; text for tables, vectors or expressions"
+              },
+              "unit": {
+                "default": null,
+                "description": "Unit, e.g. \"nm\" or \"g/kWh\"; null when dimensionless",
+                "anyOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "null" }
+                ]
+              },
+              "referenceIds": {
+                "default": [],
+                "description": "Sources of the value",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+                  "description": "Reference id of the methodology catalog, e.g. \"imo-mepc-353-78\""
+                }
+              },
+              "needsCitation": {
+                "default": false,
+                "description": "The value has no verified external source yet",
+                "type": "boolean"
+              }
+            },
+            "required": ["symbol", "name", "value"],
+            "description": "Constant, coefficient or threshold of a method"
+          }
+        },
+        "referenceIds": {
+          "default": [],
+          "description": "Sources of the method",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+            "description": "Reference id of the methodology catalog, e.g. \"imo-mepc-353-78\""
+          }
+        },
+        "implementedBy": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "service": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Service or package, e.g. \"emission\" or \"contracts\""
+                },
+                "module": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Module or symbol, e.g. \"src/domain/cii.ts#attainedCii\""
+                }
+              },
+              "required": ["service", "module"],
+              "description": "Implementation of the method"
+            },
+            { "type": "null" }
+          ]
+        },
+        "legacy": {
+          "default": [],
+          "description": "Legacy MVP implementations kept in parity, e.g. \"be-legacy/src/utils/calculate-ews.ts#checkShipStatus\"",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "status": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Lifecycle of the method, e.g. implemented, planned, deprecated",
+          "examples": ["implemented", "planned", "deprecated"]
+        },
+        "needsCitation": {
+          "default": false,
+          "description": "Values come from the thesis without a verified external source",
+          "type": "boolean"
+        },
+        "notes": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Bahasa Indonesia"
+                },
+                "en": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "English"
+                }
+              },
+              "required": ["id", "en"],
+              "description": "Text in Bahasa Indonesia and English"
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": ["id", "domain", "name", "summary", "status"],
+      "title": "Method",
+      "description": "A formula, empirical constant, threshold or rule of the platform with its sources (methodology catalog)."
+    }
+  }
+}

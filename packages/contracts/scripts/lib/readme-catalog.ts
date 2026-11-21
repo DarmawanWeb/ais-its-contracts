@@ -4,6 +4,7 @@ import {
   ROLE_PERMISSIONS,
   ROLES,
 } from '../../src/auth/index.js';
+import { ALERT_TYPE_LIST } from '../../src/domain/index.js';
 import {
   CONSUMER_LIST,
   consumersOfEvent,
@@ -121,11 +122,39 @@ export function renderPermissionMatrix(): string {
   return `${matrix}\n\nAPI key scopes: ${API_KEY_SCOPES.map(code).join(', ')}.`;
 }
 
+/** Table of the alert type registry (spec 7.3). */
+export function renderAlertTypesTable(): string {
+  return table(
+    [
+      'Alert type',
+      'Domain',
+      'Default severity',
+      'Severity by level',
+      'Label (en / id)',
+    ],
+    ALERT_TYPE_LIST.map((definition) => {
+      const levels = Object.entries(definition.severityByLevel);
+      return [
+        code(definition.type),
+        definition.domain,
+        definition.defaultSeverity,
+        levels.length === 0
+          ? '—'
+          : levels
+              .map(([level, severity]) => `${level} → ${severity}`)
+              .join(', '),
+        `${definition.label.en} / ${definition.label.id}`,
+      ];
+    }),
+  );
+}
+
 /** Generated README sections keyed by marker name. */
 export const README_SECTIONS: Readonly<Record<string, () => string>> = {
   events: renderEventsTable,
   streams: renderStreamsTable,
   consumers: renderConsumersTable,
+  'alert-types': renderAlertTypesTable,
   permissions: renderPermissionMatrix,
 };
 

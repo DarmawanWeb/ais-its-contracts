@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ALERT_TYPES } from '../domain/alerts.js';
+import { KNOWN_ALERT_TYPES } from '../domain/alerts.js';
 import { exampleEnvelope } from './__fixtures__/examples.js';
 import { STREAMS, streamForSubject } from './streams.js';
 import { subjectMatchesFilter } from './subject-match.js';
@@ -11,6 +11,8 @@ import {
   SUBJECT_FILTERS,
   subjectForEvent,
   subjects,
+  TELEMETRY_MQTT_TOPIC_PREFIX,
+  telemetryMqttTopic,
 } from './subjects.js';
 import { EVENT_TYPE_LIST } from './types.js';
 
@@ -24,9 +26,16 @@ describe('subject builders', () => {
     expect(subjects.fleetVessel('01a1f8c2-54d9-7223-9107-543e8d90de1c')).toBe(
       'fleet.vessel.v1.01a1f8c2-54d9-7223-9107-543e8d90de1c',
     );
+    expect(subjects.geoZone('01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e')).toBe(
+      'geo.zone.v1.01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e',
+    );
+    expect(subjects.safetyState(525005223)).toBe('safety.state.v1.525005223');
     expect(subjects.ciiUpdated(525005223)).toBe('emission.cii.v1.525005223');
     expect(subjects.alert('transhipment', 525005223)).toBe(
       'alert.v1.transhipment.525005223',
+    );
+    expect(subjects.alert('collision', 525005223)).toBe(
+      'alert.v1.collision.525005223',
     );
     expect(subjects.notifyEmail()).toBe('notify.email.v1');
     expect(subjects.audit('fleet')).toBe('audit.v1.fleet');
@@ -34,8 +43,29 @@ describe('subject builders', () => {
       'dlq.AIS_POSITION.emission-positions',
     );
     expect(subjects.telemetryMqtt('device-42')).toBe(
-      'seemp.telemetry.device-42',
+      'aisits.telemetry.device-42',
     );
+  });
+
+  it('maps the MQTT topic of a device to its core NATS subject', () => {
+    expect(TELEMETRY_MQTT_TOPIC_PREFIX).toBe('aisits/telemetry/');
+    expect(telemetryMqttTopic('device-42')).toBe('aisits/telemetry/device-42');
+    expect(telemetryMqttTopic('device-42').replaceAll('/', '.')).toBe(
+      subjects.telemetryMqtt('device-42'),
+    );
+    for (const deviceId of ['a/b', 'a+', '#', 'a.b', '']) {
+      expect(() => telemetryMqttTopic(deviceId), deviceId).toThrow(RangeError);
+    }
+  });
+
+  it('accepts future alert types but rejects malformed ones', () => {
+    expect(subjects.alert('anchor_dragging', 525005223)).toBe(
+      'alert.v1.anchor_dragging.525005223',
+    );
+    for (const type of ['Ews', 'ews.v2', 'ews*', '', '1ews', 'ews-x']) {
+      expect(() => subjects.alert(type, 525005223), type).toThrow(RangeError);
+      expect(() => subjects.alertTypeFilter(type), type).toThrow(RangeError);
+    }
   });
 
   it('builds filters that match exactly their family', () => {
@@ -58,6 +88,8 @@ describe('subject builders', () => {
   it('rejects tokens that would break NATS subjects', () => {
     expect(() => subjects.fleetVessel('a.b')).toThrow(RangeError);
     expect(() => subjects.fleetVessel('')).toThrow(RangeError);
+    expect(() => subjects.geoZone('zone.1')).toThrow(RangeError);
+    expect(() => subjects.geoZone('>')).toThrow(RangeError);
     expect(() => subjects.audit('*')).toThrow(RangeError);
     expect(() => subjects.telemetryMqtt('dev >')).toThrow(RangeError);
     expect(() => subjects.dlq('DLQ', 'with space')).toThrow(RangeError);
@@ -73,6 +105,7 @@ describe('subject builders', () => {
     ]) {
       expect(() => subjects.aisPosition(mmsi)).toThrow(RangeError);
       expect(() => subjects.fuelReading(mmsi)).toThrow(RangeError);
+      expect(() => subjects.safetyState(mmsi)).toThrow(RangeError);
       expect(() => subjects.alert('ews', mmsi)).toThrow(RangeError);
     }
   });
@@ -126,7 +159,9 @@ describe('subjectMatchesFilter', () => {
     ['ais.raw.v1.batam', 'ais.raw.v1.>', true],
     ['ais.raw.v1', 'ais.raw.v1.>', false],
     ['ais.raw.v1.batam.extra', 'ais.raw.v1.*', false],
-    ['seemp.telemetry.device-1', 'seemp.telemetry.*', true],
+    ['aisits.telemetry.device-1', 'aisits.telemetry.*', true],
+    ['safety.state.v1.525005223', 'safety.state.v1.>', true],
+    ['geo.zone.v1.z1', 'geo.zone.v1.*', true],
     ['notify.email.v1', 'notify.email.v1', true],
     ['notify.email.v2', 'notify.email.v1', false],
     ['alert.v1.ews.525005223', 'alert.*.ews.>', true],
@@ -143,8 +178,10 @@ describe('subjects and streams', () => {
       [subjects.aisPosition(525005223), 'AIS_POSITION'],
       [subjects.fuelReading(525005223), 'FUEL'],
       [subjects.fleetVessel('01a1f8c2-54d9-7223-9107-543e8d90de1c'), 'FLEET'],
+      [subjects.geoZone('01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e'), 'GEO'],
+      [subjects.safetyState(525005223), 'SAFETY'],
       [subjects.ciiUpdated(525005223), 'EMISSION'],
-      ...ALERT_TYPES.map((type): [string, keyof typeof STREAMS] => [
+      ...KNOWN_ALERT_TYPES.map((type): [string, keyof typeof STREAMS] => [
         subjects.alert(type, 525005223),
         'ALERTS',
       ]),
@@ -168,6 +205,8 @@ describe('subjects and streams', () => {
     expect(SUBJECT_FILTERS.AIS_POSITION).toBe(STREAMS.AIS_POSITION.subjects[0]);
     expect(SUBJECT_FILTERS.FUEL_READING).toBe(STREAMS.FUEL.subjects[0]);
     expect(SUBJECT_FILTERS.FLEET_VESSEL).toBe(STREAMS.FLEET.subjects[0]);
+    expect(SUBJECT_FILTERS.GEO_ZONE).toBe(STREAMS.GEO.subjects[0]);
+    expect(SUBJECT_FILTERS.SAFETY_STATE).toBe(STREAMS.SAFETY.subjects[0]);
     expect(SUBJECT_FILTERS.CII_UPDATED).toBe(STREAMS.EMISSION.subjects[0]);
     expect(SUBJECT_FILTERS.ALERT).toBe(STREAMS.ALERTS.subjects[0]);
     expect(SUBJECT_FILTERS.NOTIFY_EMAIL).toBe(STREAMS.NOTIFY.subjects[0]);
@@ -186,6 +225,10 @@ describe('subjectForEvent', () => {
         'fleet.vessel.v1.01a1f8c2-54d9-7223-9107-543e8d90de1c',
       'fleet.vessel.deleted.v1':
         'fleet.vessel.v1.01a1f8c2-54d9-7223-9107-543e8d90de1c',
+      'geo.zone.upserted.v1':
+        'geo.zone.v1.01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e',
+      'geo.zone.deleted.v1': 'geo.zone.v1.01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e',
+      'safety.vessel_state.updated.v1': 'safety.state.v1.525005223',
       'emission.cii.updated.v1': 'emission.cii.v1.525005223',
       'alert.raised.v1': 'alert.v1.ews.525005223',
       'notify.email.requested.v1': 'notify.email.v1',

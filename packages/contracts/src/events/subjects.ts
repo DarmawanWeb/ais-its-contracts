@@ -1,5 +1,5 @@
 import { type AisSource, isValidMmsi } from '../domain/ais.js';
-import type { AlertType } from '../domain/alerts.js';
+import { ALERT_TYPE_PATTERN, type AlertType } from '../domain/alerts.js';
 import type { AnyEventEnvelope } from './registry.js';
 import type { StreamName } from './streams.js';
 import { EVENT_TYPES } from './types.js';
@@ -16,13 +16,18 @@ export const SUBJECT_FILTERS = {
   AIS_POSITION: 'ais.position.v1.>',
   FUEL_READING: 'fuel.reading.v1.>',
   FLEET_VESSEL: 'fleet.vessel.v1.>',
+  GEO_ZONE: 'geo.zone.v1.>',
+  SAFETY_STATE: 'safety.state.v1.>',
   CII_UPDATED: 'emission.cii.v1.>',
   ALERT: 'alert.v1.>',
   NOTIFY_EMAIL: NOTIFY_EMAIL_SUBJECT,
   AUDIT: 'audit.v1.>',
   DLQ: 'dlq.>',
-  TELEMETRY_MQTT: 'seemp.telemetry.*',
+  TELEMETRY_MQTT: 'aisits.telemetry.*',
 } as const;
+
+/** Prefix of the MQTT topics of fuel meters: `aisits/telemetry/<deviceId>`. */
+export const TELEMETRY_MQTT_TOPIC_PREFIX = 'aisits/telemetry/';
 
 const INVALID_TOKEN_CHARACTERS = /[\s.*>]/;
 
@@ -32,6 +37,16 @@ function token(value: string, name: string): string {
     throw new RangeError(`Invalid ${name} "${value}" for a NATS subject token`);
   }
   return value;
+}
+
+/** Validates an alert type used as a subject token. */
+function alertTypeToken(type: AlertType): string {
+  if (!ALERT_TYPE_PATTERN.test(type)) {
+    throw new RangeError(
+      `Invalid alert type "${type}": expected a lowercase token [a-z][a-z0-9_]*`,
+    );
+  }
+  return type;
 }
 
 /** Validates an MMSI used as a subject token. */
@@ -89,17 +104,25 @@ export const subjects = {
   fleetVessel(vesselId: string): string {
     return `fleet.vessel.v1.${token(vesselId, 'vessel id')}`;
   },
+  /** `geo.zone.v1.<zoneId>` */
+  geoZone(zoneId: string): string {
+    return `geo.zone.v1.${token(zoneId, 'zone id')}`;
+  },
+  /** `safety.state.v1.<mmsi>` */
+  safetyState(mmsi: number): string {
+    return `safety.state.v1.${mmsiToken(mmsi)}`;
+  },
   /** `emission.cii.v1.<mmsi>` */
   ciiUpdated(mmsi: number): string {
     return `emission.cii.v1.${mmsiToken(mmsi)}`;
   },
-  /** `alert.v1.<alertType>.<mmsi>` */
+  /** `alert.v1.<alertType>.<mmsi>` (registry or future alert type) */
   alert(type: AlertType, mmsi: number): string {
-    return `alert.v1.${token(type, 'alert type')}.${mmsiToken(mmsi)}`;
+    return `alert.v1.${alertTypeToken(type)}.${mmsiToken(mmsi)}`;
   },
   /** Filter of one alert type: `alert.v1.<alertType>.*` */
   alertTypeFilter(type: AlertType): string {
-    return `alert.v1.${token(type, 'alert type')}.*`;
+    return `alert.v1.${alertTypeToken(type)}.*`;
   },
   /** `notify.email.v1` */
   notifyEmail(): string {
@@ -113,11 +136,24 @@ export const subjects = {
   dlq(stream: StreamName, consumer: string): string {
     return `dlq.${token(stream, 'stream name')}.${token(consumer, 'consumer name')}`;
   },
-  /** Core NATS subject of MQTT topic `seemp/telemetry/<deviceId>`: `seemp.telemetry.<deviceId>` */
+  /** Core NATS subject of MQTT topic `aisits/telemetry/<deviceId>`: `aisits.telemetry.<deviceId>` */
   telemetryMqtt(deviceId: string): string {
-    return `seemp.telemetry.${token(deviceId, 'device id')}`;
+    return `aisits.telemetry.${token(deviceId, 'device id')}`;
   },
 } as const;
+
+/**
+ * MQTT topic a fuel meter publishes to, `aisits/telemetry/<deviceId>`; the
+ * NATS MQTT gateway maps it to {@link subjects.telemetryMqtt}.
+ *
+ * @throws {RangeError} when `deviceId` contains `/`, `+`, `#`, dots, wildcards or whitespace.
+ */
+export function telemetryMqttTopic(deviceId: string): string {
+  if (/[/+#]/.test(deviceId)) {
+    throw new RangeError(`Invalid device id "${deviceId}" for an MQTT topic`);
+  }
+  return `${TELEMETRY_MQTT_TOPIC_PREFIX}${token(deviceId, 'device id')}`;
+}
 
 /**
  * NATS subject an event is published to, derived from its type and payload
@@ -134,6 +170,11 @@ export function subjectForEvent(envelope: AnyEventEnvelope): string {
     case EVENT_TYPES.FLEET_VESSEL_UPSERTED:
     case EVENT_TYPES.FLEET_VESSEL_DELETED:
       return subjects.fleetVessel(envelope.data.id);
+    case EVENT_TYPES.GEO_ZONE_UPSERTED:
+    case EVENT_TYPES.GEO_ZONE_DELETED:
+      return subjects.geoZone(envelope.data.id);
+    case EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED:
+      return subjects.safetyState(envelope.data.mmsi);
     case EVENT_TYPES.EMISSION_CII_UPDATED:
       return subjects.ciiUpdated(envelope.data.mmsi);
     case EVENT_TYPES.ALERT_RAISED:

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/audit.recorded.v1.json",
+  "$id": "urn:ais-its:schema:events:audit.recorded.v1",
   "title": "AuditRecordedV1",
   "description": "Payload (\"data\") of audit.recorded.v1. An action recorded for the central audit log.",
   "type": "object",

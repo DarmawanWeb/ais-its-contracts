@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/emission.cii.updated.v1.json",
+  "$id": "urn:ais-its:schema:events:emission.cii.updated.v1",
   "title": "CiiUpdatedV1",
   "description": "Payload (\"data\") of emission.cii.updated.v1. Year-to-date Carbon Intensity Indicator of a vessel.",
   "type": "object",

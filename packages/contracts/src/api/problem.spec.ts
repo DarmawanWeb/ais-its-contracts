@@ -60,7 +60,7 @@ describe('problem details (RFC 9457)', () => {
   it('derives the problem type URI from the code', () => {
     expect(PROBLEM_CONTENT_TYPE).toBe('application/problem+json');
     expect(problemTypeUri('VESSEL_NOT_FOUND')).toBe(
-      'https://seemp.dev/problems/vessel-not-found',
+      'urn:ais-its:problem:vessel-not-found',
     );
     expect(
       problemTypeUri('INTERNAL_ERROR').startsWith(PROBLEM_TYPE_BASE_URI),
@@ -75,7 +75,7 @@ describe('problem details (RFC 9457)', () => {
       errors: [{ field: 'mmsi', message: 'unknown' }],
     });
     expect(problem).toEqual({
-      type: 'https://seemp.dev/problems/vessel-not-found',
+      type: 'urn:ais-its:problem:vessel-not-found',
       title: 'Vessel not found',
       status: 404,
       detail: 'No vessel with MMSI 525005223',
@@ -86,7 +86,7 @@ describe('problem details (RFC 9457)', () => {
     });
     expect(ProblemDetailsSchema.parse(problem)).toEqual(problem);
     expect(createProblem('FORBIDDEN')).toEqual({
-      type: 'https://seemp.dev/problems/forbidden',
+      type: 'urn:ais-its:problem:forbidden',
       title: 'Forbidden',
       status: 403,
       code: 'FORBIDDEN',

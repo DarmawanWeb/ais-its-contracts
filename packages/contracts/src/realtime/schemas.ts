@@ -4,11 +4,22 @@ import { IsoDateTimeSchema } from '../api/datetime.js';
 import { ERROR_CODE_PATTERN } from '../api/error-codes.js';
 import { MmsiSchema } from '../domain/ais.js';
 import { AlertStatusSchema } from '../domain/alerts.js';
-import { BBoxSchema } from '../domain/geo.js';
-import type { AisPositionRecordedV1 } from '../events/payloads/ais.js';
-import { AisPositionRecordedV1Schema } from '../events/payloads/ais.js';
+import {
+  BBoxSchema,
+  type GeoPoint,
+  LatitudeSchema,
+  LongitudeSchema,
+} from '../domain/geo.js';
+import {
+  type AisPositionRecordedV1,
+  AisPositionRecordedV1Schema,
+} from '../events/payloads/ais.js';
 import { AlertRaisedV1Schema } from '../events/payloads/alert.js';
 import type { CiiUpdatedV1 } from '../events/payloads/emission.js';
+import {
+  type SafetyVesselStateV1,
+  SafetyVesselStateV1Schema,
+} from '../events/payloads/safety.js';
 import { MAX_TILE_ZOOM } from './tiles.js';
 
 /** `viewport:set` request: the visible map box and zoom. */
@@ -54,7 +65,6 @@ export const RealtimePositionSchema = AisPositionRecordedV1Schema.pick({
   hdg: true,
   navstatus: true,
   predictedNavstatus: true,
-  ewsStatus: true,
   source: true,
 }).describe('Realtime vessel position');
 
@@ -75,7 +85,6 @@ export function toRealtimePosition(
     hdg: position.hdg,
     navstatus: position.navstatus,
     predictedNavstatus: position.predictedNavstatus,
-    ewsStatus: position.ewsStatus,
     source: position.source,
   };
 }
@@ -91,28 +100,83 @@ export const PositionsBatchSchema = z
 /** `positions` batch. */
 export type PositionsBatch = z.infer<typeof PositionsBatchSchema>;
 
+const safetyState = SafetyVesselStateV1Schema.shape;
+
+/**
+ * The safety state of a vessel as pushed to clients (`safety:states`,
+ * `vessel:safety`): the `SAFETY` stream state at the vessel's position.
+ */
+export const RealtimeSafetyStateSchema = z
+  .object({
+    mmsi: safetyState.mmsi,
+    time: safetyState.time,
+    lat: LatitudeSchema,
+    lon: LongitudeSchema,
+    ewsStatus: safetyState.ewsStatus,
+    collisionRisk: safetyState.collisionRisk,
+    closestEncounter: safetyState.closestEncounter,
+  })
+  .describe('Realtime vessel safety state');
+
+/** The safety state of a vessel as pushed to clients. */
+export type RealtimeSafetyState = z.infer<typeof RealtimeSafetyStateSchema>;
+
+/**
+ * Projects a safety state event onto the realtime shape. `SafetyVesselStateV1`
+ * carries no coordinates, so the gateway passes the latest position it knows
+ * of the vessel (from `AIS_POSITION`); it also selects the tile room.
+ */
+export function toRealtimeSafetyState(
+  state: SafetyVesselStateV1,
+  position: GeoPoint,
+): RealtimeSafetyState {
+  return {
+    mmsi: state.mmsi,
+    time: state.time,
+    lat: position.lat,
+    lon: position.lon,
+    ewsStatus: state.ewsStatus,
+    collisionRisk: state.collisionRisk,
+    closestEncounter: state.closestEncounter,
+  };
+}
+
+/** `safety:states` batch: latest safety state per vessel in the batch window. */
+export const SafetyStatesBatchSchema = z
+  .object({
+    at: IsoDateTimeSchema.describe('When the batch was emitted'),
+    items: z.array(RealtimeSafetyStateSchema),
+  })
+  .describe('safety:states batch');
+
+/** `safety:states` batch. */
+export type SafetyStatesBatch = z.infer<typeof SafetyStatesBatchSchema>;
+
+const alert = AlertRaisedV1Schema.shape;
+
 /** An alert as delivered to clients (`alert:raised` / `alert:updated`). */
-export const RealtimeAlertSchema = AlertRaisedV1Schema.pick({
-  id: true,
-  type: true,
-  severity: true,
-  mmsi: true,
-  relatedMmsi: true,
-  title: true,
-  message: true,
-  lat: true,
-  lon: true,
-  zoneId: true,
-  occurredAt: true,
-  data: true,
-})
-  .extend({
+export const RealtimeAlertSchema = z
+  .object({
+    id: alert.id,
+    type: alert.type,
+    domain: alert.domain,
+    severity: alert.severity,
     status: AlertStatusSchema,
+    mmsi: alert.mmsi,
+    relatedMmsi: alert.relatedMmsi,
+    title: alert.title,
+    message: alert.message,
+    lat: alert.lat,
+    lon: alert.lon,
+    zoneId: alert.zoneId,
+    methodId: alert.methodId,
+    occurredAt: alert.occurredAt,
     lastOccurredAt: IsoDateTimeSchema.describe('Latest merged occurrence'),
     occurrences: z
       .int()
       .min(1)
       .describe('Occurrences merged into this alert (same dedupKey)'),
+    data: alert.data,
   })
   .describe('Alert (inbox view)');
 
@@ -179,7 +243,9 @@ export interface RealtimeClientToServerEvents {
  */
 export interface RealtimeServerToClientEvents {
   positions: (batch: PositionsBatch) => void;
+  'safety:states': (batch: SafetyStatesBatch) => void;
   'vessel:position': (position: RealtimePosition) => void;
+  'vessel:safety': (state: RealtimeSafetyState) => void;
   'alert:raised': (alert: RealtimeAlert) => void;
   'alert:updated': (alert: RealtimeAlert) => void;
   'cii:updated': (update: CiiUpdatedV1) => void;

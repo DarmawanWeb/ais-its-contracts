@@ -9,14 +9,14 @@ import {
 /** Media type of RFC 9457 problem responses. */
 export const PROBLEM_CONTENT_TYPE = 'application/problem+json';
 
-/** Base URI of the problem `type` of every platform error code. */
-export const PROBLEM_TYPE_BASE_URI = 'https://seemp.dev/problems/';
+/** Prefix of the problem `type` URN of every platform error code (spec 5). */
+export const PROBLEM_TYPE_BASE_URI = 'urn:ais-its:problem:';
 
 /**
- * Problem `type` URI of an error code: the code in kebab case under
+ * Problem `type` URI of an error code: the code in kebab case after
  * {@link PROBLEM_TYPE_BASE_URI}.
  *
- * @example problemTypeUri('VESSEL_NOT_FOUND') // "https://seemp.dev/problems/vessel-not-found"
+ * @example problemTypeUri('VESSEL_NOT_FOUND') // "urn:ais-its:problem:vessel-not-found"
  */
 export function problemTypeUri(code: string): string {
   return `${PROBLEM_TYPE_BASE_URI}${code.toLowerCase().replaceAll('_', '-')}`;

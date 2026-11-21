@@ -1,8 +1,8 @@
 /** Default JWT issuer (`AUTH_ISSUER`). */
-export const DEFAULT_AUTH_ISSUER = 'seemp-auth';
+export const DEFAULT_AUTH_ISSUER = 'ais-its-auth';
 
 /** Default JWT audience (`AUTH_AUDIENCE`). */
-export const DEFAULT_AUTH_AUDIENCE = 'seemp-api';
+export const DEFAULT_AUTH_AUDIENCE = 'ais-its-api';
 
 /** JWS algorithm of access tokens (Ed25519). */
 export const ACCESS_TOKEN_ALGORITHM = 'EdDSA';
@@ -17,7 +17,7 @@ export const ACCESS_TOKEN_TTL_SECONDS = 900;
 export const MFA_TOKEN_TTL_SECONDS = 300;
 
 /** Name of the refresh token cookie. */
-export const REFRESH_TOKEN_COOKIE = 'seemp_rt';
+export const REFRESH_TOKEN_COOKIE = 'aisits_rt';
 
 /** `Path` attribute of the refresh token cookie. */
 export const REFRESH_TOKEN_COOKIE_PATH = '/api/v2/auth';
@@ -46,8 +46,10 @@ export const HTTP_HEADERS = {
   ORG_ID: 'X-Org-Id',
   /** Set by `GET /auth/verify` (comma separated) for the gateway `forwardAuth`. */
   ROLES: 'X-Roles',
-  /** HMAC signature of outgoing webhooks: `sha256=<hex>`. */
-  WEBHOOK_SIGNATURE: 'X-Seemp-Signature',
+  /** HMAC signature of outgoing webhooks: `sha256=<hex>` (spec 13.9). */
+  WEBHOOK_SIGNATURE: 'X-AIS-ITS-Signature',
+  /** Timestamp of outgoing webhooks, covered by the signature (spec 13.9). */
+  WEBHOOK_TIMESTAMP: 'X-AIS-ITS-Timestamp',
 } as const;
 
 const BEARER_PATTERN = /^Bearer[ \t]+(\S+)[ \t]*$/i;

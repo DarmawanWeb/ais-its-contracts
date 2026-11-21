@@ -12,8 +12,12 @@ import {
   RealtimeErrorSchema,
   RealtimeHandshakeAuthSchema,
   RealtimePositionSchema,
+  type RealtimeSafetyState,
+  RealtimeSafetyStateSchema,
   type RealtimeServerToClientEvents,
+  SafetyStatesBatchSchema,
   toRealtimePosition,
+  toRealtimeSafetyState,
   VesselSubscribeRequestSchema,
   ViewportSetRequestSchema,
   ViewportSetResultSchema,
@@ -21,10 +25,12 @@ import {
 
 const POSITION_EVENT = EVENT_EXAMPLES['ais.position.recorded.v1'];
 const ALERT_EVENT = EVENT_EXAMPLES['alert.raised.v1'];
+const SAFETY_EVENT = EVENT_EXAMPLES['safety.vessel_state.updated.v1'];
 
 const ALERT: RealtimeAlert = {
   id: ALERT_EVENT.id,
   type: ALERT_EVENT.type,
+  domain: ALERT_EVENT.domain,
   severity: ALERT_EVENT.severity,
   status: 'open',
   mmsi: ALERT_EVENT.mmsi,
@@ -33,7 +39,8 @@ const ALERT: RealtimeAlert = {
   message: ALERT_EVENT.message,
   lat: ALERT_EVENT.lat,
   lon: ALERT_EVENT.lon,
-  zoneId: null,
+  zoneId: ALERT_EVENT.zoneId,
+  methodId: ALERT_EVENT.methodId,
   occurredAt: ALERT_EVENT.occurredAt,
   lastOccurredAt: '2026-11-20T08:41:00.000Z',
   occurrences: 3,
@@ -75,7 +82,9 @@ describe('client → server messages', () => {
     ]);
     expect(Object.values(REALTIME_SERVER_EVENTS)).toEqual([
       'positions',
+      'safety:states',
       'vessel:position',
+      'vessel:safety',
       'alert:raised',
       'alert:updated',
       'cii:updated',
@@ -97,7 +106,6 @@ describe('server → client messages', () => {
         'hdg',
         'navstatus',
         'predictedNavstatus',
-        'ewsStatus',
         'source',
       ].sort(),
     );
@@ -108,6 +116,47 @@ describe('server → client messages', () => {
         items: [position],
       }),
     ).toEqual({ at: '2026-11-20T08:30:01.000Z', items: [position] });
+  });
+
+  it('projects safety states onto RealtimeSafetyState at the latest position', () => {
+    const state = toRealtimeSafetyState(SAFETY_EVENT, {
+      lat: -6.8629,
+      lon: 112.7166,
+    });
+    const expected: RealtimeSafetyState = {
+      mmsi: 525005223,
+      time: SAFETY_EVENT.time,
+      lat: -6.8629,
+      lon: 112.7166,
+      ewsStatus: 0,
+      collisionRisk: 'low',
+      closestEncounter: SAFETY_EVENT.closestEncounter,
+    };
+    expect(state).toEqual(expected);
+    expect(Object.keys(state)).toEqual([
+      'mmsi',
+      'time',
+      'lat',
+      'lon',
+      'ewsStatus',
+      'collisionRisk',
+      'closestEncounter',
+    ]);
+    expect(RealtimeSafetyStateSchema.parse({ ...state, extra: 1 })).toEqual(
+      state,
+    );
+    expect(
+      RealtimeSafetyStateSchema.safeParse({ ...state, lat: 95 }).success,
+    ).toBe(false);
+    expect(
+      SafetyStatesBatchSchema.parse({
+        at: '2026-11-20T08:31:01.000Z',
+        items: [state],
+      }).items,
+    ).toEqual([state]);
+    expect(
+      SafetyStatesBatchSchema.safeParse({ at: 'now', items: [] }).success,
+    ).toBe(false);
   });
 
   it('validates alerts as delivered to clients', () => {
@@ -121,6 +170,16 @@ describe('server → client messages', () => {
     expect(
       RealtimeAlertSchema.parse({ ...ALERT, dedupKey: 'ews:1' }),
     ).not.toHaveProperty('dedupKey');
+    expect(
+      RealtimeAlertSchema.parse({
+        ...ALERT,
+        type: 'anchor_dragging',
+        domain: 'safety',
+      }).type,
+    ).toBe('anchor_dragging');
+    expect(
+      RealtimeAlertSchema.safeParse({ ...ALERT, domain: undefined }).success,
+    ).toBe(false);
   });
 
   it('validates errors and acknowledgements', () => {

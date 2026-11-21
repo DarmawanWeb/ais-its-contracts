@@ -10,10 +10,10 @@ import {
   tilesForBbox,
 } from './tiles.js';
 
-/** Room receiving `positions` batches for every vessel (every 5 s). */
+/** Room receiving `positions` and `safety:states` batches for every vessel (every 5 s). */
 export const ALL_TILES_ROOM = 'tile:all';
 
-/** Room of users with cross-tenant surveillance access (authority, super_admin). */
+/** Room of users with cross-tenant safety and surveillance access (authority, super_admin). */
 export const AUTHORITY_ROOM = 'authority';
 
 /**

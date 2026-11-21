@@ -1,11 +1,13 @@
 {
-  "name": "@darmawanweb/seemp-contracts",
-  "version": "0.1.0",
-  "description": "Isomorphic contracts of the SEEMP platform: event envelope and payload schemas, NATS streams and subjects, roles and permissions, realtime protocol, API problem details and domain constants.",
+  "name": "@darmawanweb/ais-its-contracts",
+  "version": "0.2.0",
+  "description": "Isomorphic contracts of AIS Maritime Intelligence: event envelope and payload schemas, NATS streams and subjects, roles and permissions, realtime protocol, API problem details, domain vocabulary and the methodology catalog.",
   "keywords": [
-    "seemp",
-    "cii",
     "ais",
+    "ais-its",
+    "maritime-intelligence",
+    "maritime-safety",
+    "cii",
     "contracts",
     "zod",
     "nats",
@@ -15,8 +17,12 @@
   "author": "DarmawanWeb",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DarmawanWeb/seemp-contracts.git",
+    "url": "git+https://github.com/DarmawanWeb/ais-its-contracts.git",
     "directory": "packages/contracts"
+  },
+  "homepage": "https://github.com/DarmawanWeb/ais-its-contracts/tree/main/packages/contracts#readme",
+  "bugs": {
+    "url": "https://github.com/DarmawanWeb/ais-its-contracts/issues"
   },
   "type": "module",
   "sideEffects": false,
@@ -87,6 +93,16 @@
         "default": "./dist/api/index.cjs"
       }
     },
+    "./references": {
+      "import": {
+        "types": "./dist/references/index.d.ts",
+        "default": "./dist/references/index.js"
+      },
+      "require": {
+        "types": "./dist/references/index.d.cts",
+        "default": "./dist/references/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -105,6 +121,9 @@
       ],
       "api": [
         "./dist/api/index.d.ts"
+      ],
+      "references": [
+        "./dist/references/index.d.ts"
       ]
     }
   },
@@ -125,6 +144,8 @@
     "clean": "node -e \"for (const p of ['dist', 'coverage']) require('node:fs').rmSync(p, { recursive: true, force: true })\"",
     "schemas": "tsx scripts/generate-artifacts.ts",
     "schemas:check": "tsx scripts/generate-artifacts.ts --check",
+    "references:sync": "tsx scripts/sync-references.ts",
+    "references:check": "tsx scripts/sync-references.ts --check",
     "check:package": "node scripts/smoke-dist.mjs && publint --strict && attw --pack .",
     "prepublishOnly": "pnpm run build"
   },

@@ -4,4 +4,6 @@ export * from './audit.js';
 export * from './emission.js';
 export * from './fleet.js';
 export * from './fuel.js';
+export * from './geo.js';
 export * from './notify.js';
+export * from './safety.js';

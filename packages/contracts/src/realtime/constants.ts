@@ -7,10 +7,10 @@ export const REALTIME_TILE_ZOOM = 6;
 /** Above this many tiles a viewport joins `tile:all` instead. */
 export const REALTIME_MAX_TILES = 64;
 
-/** Batch interval of `positions` for tile rooms, in milliseconds. */
+/** Batch interval of `positions` and `safety:states` for tile rooms, in milliseconds. */
 export const REALTIME_TILE_BATCH_INTERVAL_MS = 1000;
 
-/** Batch interval of `positions` for the `tile:all` room, in milliseconds. */
+/** Batch interval of `positions` and `safety:states` for the `tile:all` room, in milliseconds. */
 export const REALTIME_ALL_TILES_BATCH_INTERVAL_MS = 5000;
 
 /** Client → server events (all acknowledged). */
@@ -27,7 +27,9 @@ export type RealtimeClientEvent =
 /** Server → client events. */
 export const REALTIME_SERVER_EVENTS = {
   POSITIONS: 'positions',
+  SAFETY_STATES: 'safety:states',
   VESSEL_POSITION: 'vessel:position',
+  VESSEL_SAFETY: 'vessel:safety',
   ALERT_RAISED: 'alert:raised',
   ALERT_UPDATED: 'alert:updated',
   CII_UPDATED: 'cii:updated',

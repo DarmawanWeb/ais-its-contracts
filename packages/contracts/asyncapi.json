@@ -1,9 +1,9 @@
 {
   "asyncapi": "3.0.0",
   "info": {
-    "title": "SEEMP Platform Events",
-    "version": "0.1.0",
-    "description": "NATS JetStream contracts of the SEEMP platform v2 (spec section 7), generated from @darmawanweb/seemp-contracts. Every message is a JSON event envelope; \"data\" follows the payload schema of its \"type\".",
+    "title": "AIS Maritime Intelligence Events",
+    "version": "0.2.0",
+    "description": "NATS JetStream contracts of AIS Maritime Intelligence v2 (spec section 7), generated from @darmawanweb/ais-its-contracts. Every message is a JSON event envelope; \"data\" follows the payload schema of its \"type\".",
     "license": { "name": "UNLICENSED" }
   },
   "defaultContentType": "application/json",
@@ -28,7 +28,7 @@
       "messages": {
         "AisRawReceivedV1": { "$ref": "#/components/messages/AisRawReceivedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -72,7 +72,7 @@
           "$ref": "#/components/messages/AisPositionRecordedV1"
         }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -93,7 +93,7 @@
           "$ref": "#/components/messages/FuelReadingRecordedV1"
         }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -115,7 +115,7 @@
         },
         "VesselDeletedV1": { "$ref": "#/components/messages/VesselDeletedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": 1,
         "duplicateWindowMs": 120000,
@@ -126,6 +126,47 @@
         "description": "Latest vessel snapshot per vessel (projection source for every service)."
       }
     },
+    "geoZone": {
+      "address": "geo.zone.v1.{zoneId}",
+      "title": "GEO",
+      "description": "Latest zone snapshot per zone published by geo (projection source for safety and surveillance). JetStream stream GEO: limits retention, max age ∞, keeps 1 message(s) per subject.",
+      "parameters": { "zoneId": { "description": "Zone id (UUID)." } },
+      "messages": {
+        "ZoneSnapshotV1": { "$ref": "#/components/messages/ZoneSnapshotV1" },
+        "ZoneDeletedV1": { "$ref": "#/components/messages/ZoneDeletedV1" }
+      },
+      "x-ais-its-stream": {
+        "retention": "limits",
+        "maxMsgsPerSubject": 1,
+        "duplicateWindowMs": 120000,
+        "storage": "file",
+        "name": "GEO",
+        "subjects": ["geo.zone.v1.>"],
+        "maxAgeMs": 0,
+        "description": "Latest zone snapshot per zone published by geo (projection source for safety and surveillance)."
+      }
+    },
+    "safetyState": {
+      "address": "safety.state.v1.{mmsi}",
+      "title": "SAFETY",
+      "description": "Latest navigational safety state per vessel published by safety. JetStream stream SAFETY: limits retention, max age 7 d, keeps 1 message(s) per subject.",
+      "parameters": { "mmsi": { "description": "Vessel MMSI (9 digits)." } },
+      "messages": {
+        "SafetyVesselStateV1": {
+          "$ref": "#/components/messages/SafetyVesselStateV1"
+        }
+      },
+      "x-ais-its-stream": {
+        "retention": "limits",
+        "maxMsgsPerSubject": 1,
+        "duplicateWindowMs": 120000,
+        "storage": "file",
+        "name": "SAFETY",
+        "subjects": ["safety.state.v1.>"],
+        "maxAgeMs": 604800000,
+        "description": "Latest navigational safety state per vessel published by safety."
+      }
+    },
     "ciiUpdated": {
       "address": "emission.cii.v1.{mmsi}",
       "title": "EMISSION",
@@ -134,7 +175,7 @@
       "messages": {
         "CiiUpdatedV1": { "$ref": "#/components/messages/CiiUpdatedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -148,12 +189,13 @@
     "alert": {
       "address": "alert.v1.{alertType}.{mmsi}",
       "title": "ALERTS",
-      "description": "Alerts raised by ais-processor (ews) and detection. JetStream stream ALERTS: limits retention, max age 90 d.",
+      "description": "Alerts raised by the safety and surveillance detectors (alert.v1.<alertType>.<mmsi>). JetStream stream ALERTS: limits retention, max age 90 d.",
       "parameters": {
         "alertType": {
-          "description": "Alert type.",
-          "enum": [
+          "description": "Alert type of the registry ALERT_TYPES or a future type (consumers accept unknown types).",
+          "examples": [
             "ews",
+            "collision",
             "transhipment",
             "anomaly",
             "dark",
@@ -166,7 +208,7 @@
       "messages": {
         "AlertRaisedV1": { "$ref": "#/components/messages/AlertRaisedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -174,7 +216,7 @@
         "name": "ALERTS",
         "subjects": ["alert.v1.>"],
         "maxAgeMs": 7776000000,
-        "description": "Alerts raised by ais-processor (ews) and detection."
+        "description": "Alerts raised by the safety and surveillance detectors (alert.v1.<alertType>.<mmsi>)."
       }
     },
     "notifyEmail": {
@@ -185,7 +227,7 @@
       "messages": {
         "EmailRequestedV1": { "$ref": "#/components/messages/EmailRequestedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "workqueue",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -210,7 +252,9 @@
             "ais-processor",
             "telemetry",
             "emission",
-            "detection",
+            "geo",
+            "safety",
+            "surveillance",
             "notification"
           ]
         }
@@ -218,7 +262,7 @@
       "messages": {
         "AuditRecordedV1": { "$ref": "#/components/messages/AuditRecordedV1" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -241,6 +285,8 @@
             "AIS_POSITION",
             "FUEL",
             "FLEET",
+            "GEO",
+            "SAFETY",
             "EMISSION",
             "ALERTS",
             "NOTIFY",
@@ -253,7 +299,7 @@
       "messages": {
         "DeadLetter": { "$ref": "#/components/messages/DeadLetter" }
       },
-      "x-seemp-stream": {
+      "x-ais-its-stream": {
         "retention": "limits",
         "maxMsgsPerSubject": -1,
         "duplicateWindowMs": 120000,
@@ -265,9 +311,9 @@
       }
     },
     "telemetryMqtt": {
-      "address": "seemp.telemetry.{deviceId}",
+      "address": "aisits.telemetry.{deviceId}",
       "title": "Device telemetry (core NATS)",
-      "description": "Core NATS subject of MQTT topic seemp/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.",
+      "description": "Core NATS subject of MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.",
       "parameters": { "deviceId": { "description": "Registered device id." } },
       "messages": {
         "DeviceTelemetry": { "$ref": "#/components/messages/DeviceTelemetry" }
@@ -280,7 +326,7 @@
       "channel": { "$ref": "#/channels/aisRaw" },
       "summary": "Published by ais-ingestor.",
       "messages": [{ "$ref": "#/channels/aisRaw/messages/AisRawReceivedV1" }],
-      "x-seemp-producers": ["ais-ingestor"]
+      "x-ais-its-producers": ["ais-ingestor"]
     },
     "send-ais.position.recorded.v1": {
       "action": "send",
@@ -289,7 +335,7 @@
       "messages": [
         { "$ref": "#/channels/aisPosition/messages/AisPositionRecordedV1" }
       ],
-      "x-seemp-producers": ["ais-processor"]
+      "x-ais-its-producers": ["ais-processor"]
     },
     "send-fuel.reading.recorded.v1": {
       "action": "send",
@@ -298,7 +344,7 @@
       "messages": [
         { "$ref": "#/channels/fuelReading/messages/FuelReadingRecordedV1" }
       ],
-      "x-seemp-producers": ["telemetry"]
+      "x-ais-its-producers": ["telemetry"]
     },
     "send-fleet.vessel.upserted.v1": {
       "action": "send",
@@ -307,7 +353,7 @@
       "messages": [
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" }
       ],
-      "x-seemp-producers": ["fleet"]
+      "x-ais-its-producers": ["fleet"]
     },
     "send-fleet.vessel.deleted.v1": {
       "action": "send",
@@ -316,21 +362,44 @@
       "messages": [
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-producers": ["fleet"]
+      "x-ais-its-producers": ["fleet"]
+    },
+    "send-geo.zone.upserted.v1": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/geoZone" },
+      "summary": "Published by geo.",
+      "messages": [{ "$ref": "#/channels/geoZone/messages/ZoneSnapshotV1" }],
+      "x-ais-its-producers": ["geo"]
+    },
+    "send-geo.zone.deleted.v1": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/geoZone" },
+      "summary": "Published by geo.",
+      "messages": [{ "$ref": "#/channels/geoZone/messages/ZoneDeletedV1" }],
+      "x-ais-its-producers": ["geo"]
+    },
+    "send-safety.vessel_state.updated.v1": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/safetyState" },
+      "summary": "Published by safety.",
+      "messages": [
+        { "$ref": "#/channels/safetyState/messages/SafetyVesselStateV1" }
+      ],
+      "x-ais-its-producers": ["safety"]
     },
     "send-emission.cii.updated.v1": {
       "action": "send",
       "channel": { "$ref": "#/channels/ciiUpdated" },
       "summary": "Published by emission.",
       "messages": [{ "$ref": "#/channels/ciiUpdated/messages/CiiUpdatedV1" }],
-      "x-seemp-producers": ["emission"]
+      "x-ais-its-producers": ["emission"]
     },
     "send-alert.raised.v1": {
       "action": "send",
       "channel": { "$ref": "#/channels/alert" },
-      "summary": "Published by ais-processor, detection.",
+      "summary": "Published by safety, surveillance.",
       "messages": [{ "$ref": "#/channels/alert/messages/AlertRaisedV1" }],
-      "x-seemp-producers": ["ais-processor", "detection"]
+      "x-ais-its-producers": ["safety", "surveillance"]
     },
     "send-notify.email.requested.v1": {
       "action": "send",
@@ -339,21 +408,23 @@
       "messages": [
         { "$ref": "#/channels/notifyEmail/messages/EmailRequestedV1" }
       ],
-      "x-seemp-producers": ["auth", "notification"]
+      "x-ais-its-producers": ["auth", "notification"]
     },
     "send-audit.recorded.v1": {
       "action": "send",
       "channel": { "$ref": "#/channels/audit" },
-      "summary": "Published by auth, fleet, ais-ingestor, ais-processor, telemetry, emission, detection, notification.",
+      "summary": "Published by auth, fleet, ais-ingestor, ais-processor, telemetry, emission, geo, safety, surveillance, notification.",
       "messages": [{ "$ref": "#/channels/audit/messages/AuditRecordedV1" }],
-      "x-seemp-producers": [
+      "x-ais-its-producers": [
         "auth",
         "fleet",
         "ais-ingestor",
         "ais-processor",
         "telemetry",
         "emission",
-        "detection",
+        "geo",
+        "safety",
+        "surveillance",
         "notification"
       ]
     },
@@ -362,7 +433,7 @@
       "channel": { "$ref": "#/channels/aisRaw" },
       "summary": "ais-processor: Enriches and records raw AIS reports.",
       "messages": [{ "$ref": "#/channels/aisRaw/messages/AisRawReceivedV1" }],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "ais-processor",
         "service": "ais-processor",
@@ -379,7 +450,7 @@
       "messages": [
         { "$ref": "#/channels/aisPosition/messages/AisPositionRecordedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "emission-positions",
         "service": "emission",
@@ -389,21 +460,38 @@
         "deadLetterSubject": "dlq.AIS_POSITION.emission-positions"
       }
     },
-    "receive-detection-positions": {
+    "receive-safety-positions": {
       "action": "receive",
       "channel": { "$ref": "#/channels/aisPosition" },
-      "summary": "detection: Feeds the transhipment, anomaly, dark, geofence and fishing detectors.",
+      "summary": "safety: Feeds the navigational safety detectors (ews, collision).",
       "messages": [
         { "$ref": "#/channels/aisPosition/messages/AisPositionRecordedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
-        "durableName": "detection-positions",
-        "service": "detection",
+        "durableName": "safety-positions",
+        "service": "safety",
         "stream": "AIS_POSITION",
         "filterSubjects": ["ais.position.v1.>"],
         "maxDeliver": 10,
-        "deadLetterSubject": "dlq.AIS_POSITION.detection-positions"
+        "deadLetterSubject": "dlq.AIS_POSITION.safety-positions"
+      }
+    },
+    "receive-surveillance-positions": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/aisPosition" },
+      "summary": "surveillance: Feeds the surveillance detectors (transhipment, anomaly, dark, geofence, fishing).",
+      "messages": [
+        { "$ref": "#/channels/aisPosition/messages/AisPositionRecordedV1" }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "durable",
+        "durableName": "surveillance-positions",
+        "service": "surveillance",
+        "stream": "AIS_POSITION",
+        "filterSubjects": ["ais.position.v1.>"],
+        "maxDeliver": 10,
+        "deadLetterSubject": "dlq.AIS_POSITION.surveillance-positions"
       }
     },
     "receive-emission-fuel": {
@@ -413,7 +501,7 @@
       "messages": [
         { "$ref": "#/channels/fuelReading/messages/FuelReadingRecordedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "emission-fuel",
         "service": "emission",
@@ -431,7 +519,7 @@
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "emission-fleet",
         "service": "emission",
@@ -441,22 +529,40 @@
         "deadLetterSubject": "dlq.FLEET.emission-fleet"
       }
     },
-    "receive-detection-fleet": {
+    "receive-safety-fleet": {
       "action": "receive",
       "channel": { "$ref": "#/channels/fleetVessel" },
-      "summary": "detection: Vessel projection (mmsi → vesselId, orgId) of detection.",
+      "summary": "safety: Vessel projection (mmsi → vesselId, orgId) of safety.",
       "messages": [
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
-        "durableName": "detection-fleet",
-        "service": "detection",
+        "durableName": "safety-fleet",
+        "service": "safety",
         "stream": "FLEET",
         "filterSubjects": ["fleet.vessel.v1.>"],
         "maxDeliver": 10,
-        "deadLetterSubject": "dlq.FLEET.detection-fleet"
+        "deadLetterSubject": "dlq.FLEET.safety-fleet"
+      }
+    },
+    "receive-surveillance-fleet": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/fleetVessel" },
+      "summary": "surveillance: Vessel projection (mmsi → vesselId, orgId) of surveillance.",
+      "messages": [
+        { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
+        { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "durable",
+        "durableName": "surveillance-fleet",
+        "service": "surveillance",
+        "stream": "FLEET",
+        "filterSubjects": ["fleet.vessel.v1.>"],
+        "maxDeliver": 10,
+        "deadLetterSubject": "dlq.FLEET.surveillance-fleet"
       }
     },
     "receive-notification-fleet": {
@@ -467,7 +573,7 @@
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "notification-fleet",
         "service": "notification",
@@ -485,7 +591,7 @@
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "telemetry-fleet",
         "service": "telemetry",
@@ -503,7 +609,7 @@
         { "$ref": "#/channels/fleetVessel/messages/VesselSnapshotV1" },
         { "$ref": "#/channels/fleetVessel/messages/VesselDeletedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "ais-processor-fleet",
         "service": "ais-processor",
@@ -513,12 +619,48 @@
         "deadLetterSubject": "dlq.FLEET.ais-processor-fleet"
       }
     },
+    "receive-safety-zones": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/geoZone" },
+      "summary": "safety: Zone projection with a spatial index (ZoneIndex) of safety.",
+      "messages": [
+        { "$ref": "#/channels/geoZone/messages/ZoneSnapshotV1" },
+        { "$ref": "#/channels/geoZone/messages/ZoneDeletedV1" }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "durable",
+        "durableName": "safety-zones",
+        "service": "safety",
+        "stream": "GEO",
+        "filterSubjects": ["geo.zone.v1.>"],
+        "maxDeliver": 10,
+        "deadLetterSubject": "dlq.GEO.safety-zones"
+      }
+    },
+    "receive-surveillance-zones": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/geoZone" },
+      "summary": "surveillance: Zone projection with a spatial index (ZoneIndex) of surveillance.",
+      "messages": [
+        { "$ref": "#/channels/geoZone/messages/ZoneSnapshotV1" },
+        { "$ref": "#/channels/geoZone/messages/ZoneDeletedV1" }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "durable",
+        "durableName": "surveillance-zones",
+        "service": "surveillance",
+        "stream": "GEO",
+        "filterSubjects": ["geo.zone.v1.>"],
+        "maxDeliver": 10,
+        "deadLetterSubject": "dlq.GEO.surveillance-zones"
+      }
+    },
     "receive-notification-alerts": {
       "action": "receive",
       "channel": { "$ref": "#/channels/alert" },
       "summary": "notification: Stores alerts in the inbox, applies alert rules and pushes them to clients.",
       "messages": [{ "$ref": "#/channels/alert/messages/AlertRaisedV1" }],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "notification-alerts",
         "service": "notification",
@@ -535,7 +677,7 @@
       "messages": [
         { "$ref": "#/channels/notifyEmail/messages/EmailRequestedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "notification-email",
         "service": "notification",
@@ -550,7 +692,7 @@
       "channel": { "$ref": "#/channels/audit" },
       "summary": "auth: Writes the central audit log.",
       "messages": [{ "$ref": "#/channels/audit/messages/AuditRecordedV1" }],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "auth-audit",
         "service": "auth",
@@ -567,11 +709,25 @@
       "messages": [
         { "$ref": "#/channels/aisPosition/messages/AisPositionRecordedV1" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "ordered",
         "service": "notification",
         "stream": "AIS_POSITION",
         "filterSubjects": ["ais.position.v1.>"]
+      }
+    },
+    "receive-notification-safety": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/safetyState" },
+      "summary": "notification: Realtime safety:states / vessel:safety fan-out to tile and vessel rooms.",
+      "messages": [
+        { "$ref": "#/channels/safetyState/messages/SafetyVesselStateV1" }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "ordered",
+        "service": "notification",
+        "stream": "SAFETY",
+        "filterSubjects": ["safety.state.v1.>"]
       }
     },
     "receive-notification-cii": {
@@ -579,7 +735,7 @@
       "channel": { "$ref": "#/channels/ciiUpdated" },
       "summary": "notification: Realtime cii:updated fan-out to organization rooms.",
       "messages": [{ "$ref": "#/channels/ciiUpdated/messages/CiiUpdatedV1" }],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "ordered",
         "service": "notification",
         "stream": "EMISSION",
@@ -595,14 +751,14 @@
     "receive-telemetry-mqtt": {
       "action": "receive",
       "channel": { "$ref": "#/channels/telemetryMqtt" },
-      "summary": "telemetry: Raw device JSON from MQTT topic seemp/telemetry/<deviceId> (NATS MQTT gateway).",
+      "summary": "telemetry: Raw device JSON from MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway).",
       "messages": [
         { "$ref": "#/channels/telemetryMqtt/messages/DeviceTelemetry" }
       ],
-      "x-seemp-consumer": {
+      "x-ais-its-consumer": {
         "kind": "core",
         "service": "telemetry",
-        "subject": "seemp.telemetry.*"
+        "subject": "aisits.telemetry.*"
       }
     }
   },
@@ -635,7 +791,7 @@
             "description": "When the event was produced"
           },
           "subject": {
-            "description": "Entity key: mmsi, vesselId, …",
+            "description": "Entity key: mmsi, vesselId, zoneId, …",
             "type": "string",
             "minLength": 1
           },
@@ -819,21 +975,9 @@
             ],
             "description": "Predicted navigational status: 1 = at anchor, 0 = not at anchor"
           },
-          "ewsStatus": {
-            "anyOf": [
-              { "type": "number", "const": 0 },
-              { "type": "number", "const": 1 },
-              { "type": "number", "const": 3 }
-            ],
-            "description": "Pipeline EWS status: 0 danger, 1 warning, 3 safe"
-          },
           "coastDistanceM": {
             "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
             "description": "Distance to the Indonesian coastline in meters"
-          },
-          "pipelineDistanceM": {
-            "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
-            "description": "Distance to the nearest pipeline in meters"
           },
           "previous": {
             "anyOf": [
@@ -922,13 +1066,11 @@
           "hdg",
           "navstatus",
           "predictedNavstatus",
-          "ewsStatus",
           "coastDistanceM",
-          "pipelineDistanceM",
           "previous"
         ],
         "title": "AisPositionRecordedV1",
-        "description": "A position recorded by the ais-processor, enriched with predicted navstatus, EWS status and distances, plus the previous position of the vessel."
+        "description": "A position recorded by the ais-processor, enriched with the predicted navstatus and the coast distance, plus the previous position of the vessel. It carries no safety fields: EWS and collision risk are computed by the safety service (SafetyVesselStateV1)."
       },
       "FuelReadingRecordedV1": {
         "type": "object",
@@ -1202,6 +1344,13 @@
                 "type": "number",
                 "description": "Reference line parameter c"
               },
+              "capacityFixed": {
+                "description": "Regulation-fixed CII capacity of the size band, e.g. 279 000 for bulk carriers of 279 000 DWT and above (MEPC.353(78)); used instead of dimensions.capacity when set",
+                "anyOf": [
+                  { "type": "number", "exclusiveMinimum": 0 },
+                  { "type": "null" }
+                ]
+              },
               "d": {
                 "type": "object",
                 "properties": {
@@ -1432,6 +1581,962 @@
         "title": "VesselDeletedV1",
         "description": "A vessel was deleted from the fleet registry."
       },
+      "ZoneSnapshotV1": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "Zone id"
+          },
+          "orgId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "description": "UUID"
+              },
+              { "type": "null" }
+            ],
+            "description": "Owning organization; null = global zone"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable code of the zone (seeds are idempotent by code)"
+          },
+          "name": { "type": "string", "minLength": 1 },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pipeline",
+              "transhipment_area",
+              "fishing_ground",
+              "mpa",
+              "restricted",
+              "anchorage",
+              "port",
+              "tss_lane",
+              "shallow_water",
+              "custom"
+            ],
+            "description": "Zone kind"
+          },
+          "geometry": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "Point" },
+                  "coordinates": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number",
+                            "minimum": -180,
+                            "maximum": 180,
+                            "description": "WGS84 longitude in degrees"
+                          },
+                          {
+                            "type": "number",
+                            "minimum": -90,
+                            "maximum": 90,
+                            "description": "WGS84 latitude in degrees"
+                          }
+                        ],
+                        "additionalItems": false,
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      {
+                        "type": "array",
+                        "items": [
+                          {
+                            "type": "number",
+                            "minimum": -180,
+                            "maximum": 180,
+                            "description": "WGS84 longitude in degrees"
+                          },
+                          {
+                            "type": "number",
+                            "minimum": -90,
+                            "maximum": 90,
+                            "description": "WGS84 latitude in degrees"
+                          },
+                          { "type": "number" }
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
+                      }
+                    ],
+                    "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON Point"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "MultiPoint" },
+                  "coordinates": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": [
+                            {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180,
+                              "description": "WGS84 longitude in degrees"
+                            },
+                            {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              "description": "WGS84 latitude in degrees"
+                            }
+                          ],
+                          "additionalItems": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        {
+                          "type": "array",
+                          "items": [
+                            {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180,
+                              "description": "WGS84 longitude in degrees"
+                            },
+                            {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              "description": "WGS84 latitude in degrees"
+                            },
+                            { "type": "number" }
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
+                        }
+                      ],
+                      "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                    }
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON MultiPoint"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "LineString" },
+                  "coordinates": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": [
+                            {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180,
+                              "description": "WGS84 longitude in degrees"
+                            },
+                            {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              "description": "WGS84 latitude in degrees"
+                            }
+                          ],
+                          "additionalItems": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        {
+                          "type": "array",
+                          "items": [
+                            {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180,
+                              "description": "WGS84 longitude in degrees"
+                            },
+                            {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              "description": "WGS84 latitude in degrees"
+                            },
+                            { "type": "number" }
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
+                        }
+                      ],
+                      "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                    }
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON LineString"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "MultiLineString" },
+                  "coordinates": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minItems": 2,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180,
+                                "description": "WGS84 longitude in degrees"
+                              },
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90,
+                                "description": "WGS84 latitude in degrees"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180,
+                                "description": "WGS84 longitude in degrees"
+                              },
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90,
+                                "description": "WGS84 latitude in degrees"
+                              },
+                              { "type": "number" }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        ],
+                        "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                      }
+                    }
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON MultiLineString"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "Polygon" },
+                  "coordinates": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minItems": 4,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180,
+                                "description": "WGS84 longitude in degrees"
+                              },
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90,
+                                "description": "WGS84 latitude in degrees"
+                              }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number",
+                                "minimum": -180,
+                                "maximum": 180,
+                                "description": "WGS84 longitude in degrees"
+                              },
+                              {
+                                "type": "number",
+                                "minimum": -90,
+                                "maximum": 90,
+                                "description": "WGS84 latitude in degrees"
+                              },
+                              { "type": "number" }
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
+                          }
+                        ],
+                        "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                      },
+                      "description": "Closed linear ring (at least 4 positions, first = last)"
+                    }
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON Polygon"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "MultiPolygon" },
+                  "coordinates": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "minItems": 4,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number",
+                                  "minimum": -180,
+                                  "maximum": 180,
+                                  "description": "WGS84 longitude in degrees"
+                                },
+                                {
+                                  "type": "number",
+                                  "minimum": -90,
+                                  "maximum": 90,
+                                  "description": "WGS84 latitude in degrees"
+                                }
+                              ],
+                              "additionalItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            },
+                            {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number",
+                                  "minimum": -180,
+                                  "maximum": 180,
+                                  "description": "WGS84 longitude in degrees"
+                                },
+                                {
+                                  "type": "number",
+                                  "minimum": -90,
+                                  "maximum": 90,
+                                  "description": "WGS84 latitude in degrees"
+                                },
+                                { "type": "number" }
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
+                            }
+                          ],
+                          "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                        },
+                        "description": "Closed linear ring (at least 4 positions, first = last)"
+                      }
+                    }
+                  }
+                },
+                "required": ["type", "coordinates"],
+                "description": "GeoJSON MultiPolygon"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "const": "GeometryCollection" },
+                  "geometries": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": { "type": "string", "const": "Point" },
+                            "coordinates": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "items": [
+                                    {
+                                      "type": "number",
+                                      "minimum": -180,
+                                      "maximum": 180,
+                                      "description": "WGS84 longitude in degrees"
+                                    },
+                                    {
+                                      "type": "number",
+                                      "minimum": -90,
+                                      "maximum": 90,
+                                      "description": "WGS84 latitude in degrees"
+                                    }
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                {
+                                  "type": "array",
+                                  "items": [
+                                    {
+                                      "type": "number",
+                                      "minimum": -180,
+                                      "maximum": 180,
+                                      "description": "WGS84 longitude in degrees"
+                                    },
+                                    {
+                                      "type": "number",
+                                      "minimum": -90,
+                                      "maximum": 90,
+                                      "description": "WGS84 latitude in degrees"
+                                    },
+                                    { "type": "number" }
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
+                                }
+                              ],
+                              "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON Point"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": { "type": "string", "const": "MultiPoint" },
+                            "coordinates": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": [
+                                      {
+                                        "type": "number",
+                                        "minimum": -180,
+                                        "maximum": 180,
+                                        "description": "WGS84 longitude in degrees"
+                                      },
+                                      {
+                                        "type": "number",
+                                        "minimum": -90,
+                                        "maximum": 90,
+                                        "description": "WGS84 latitude in degrees"
+                                      }
+                                    ],
+                                    "additionalItems": false,
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": [
+                                      {
+                                        "type": "number",
+                                        "minimum": -180,
+                                        "maximum": 180,
+                                        "description": "WGS84 longitude in degrees"
+                                      },
+                                      {
+                                        "type": "number",
+                                        "minimum": -90,
+                                        "maximum": 90,
+                                        "description": "WGS84 latitude in degrees"
+                                      },
+                                      { "type": "number" }
+                                    ],
+                                    "additionalItems": false,
+                                    "minItems": 3,
+                                    "maxItems": 3
+                                  }
+                                ],
+                                "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                              }
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON MultiPoint"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": { "type": "string", "const": "LineString" },
+                            "coordinates": {
+                              "minItems": 2,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": [
+                                      {
+                                        "type": "number",
+                                        "minimum": -180,
+                                        "maximum": 180,
+                                        "description": "WGS84 longitude in degrees"
+                                      },
+                                      {
+                                        "type": "number",
+                                        "minimum": -90,
+                                        "maximum": 90,
+                                        "description": "WGS84 latitude in degrees"
+                                      }
+                                    ],
+                                    "additionalItems": false,
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": [
+                                      {
+                                        "type": "number",
+                                        "minimum": -180,
+                                        "maximum": 180,
+                                        "description": "WGS84 longitude in degrees"
+                                      },
+                                      {
+                                        "type": "number",
+                                        "minimum": -90,
+                                        "maximum": 90,
+                                        "description": "WGS84 latitude in degrees"
+                                      },
+                                      { "type": "number" }
+                                    ],
+                                    "additionalItems": false,
+                                    "minItems": 3,
+                                    "maxItems": 3
+                                  }
+                                ],
+                                "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                              }
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON LineString"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "MultiLineString"
+                            },
+                            "coordinates": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "minItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number",
+                                          "minimum": -180,
+                                          "maximum": 180,
+                                          "description": "WGS84 longitude in degrees"
+                                        },
+                                        {
+                                          "type": "number",
+                                          "minimum": -90,
+                                          "maximum": 90,
+                                          "description": "WGS84 latitude in degrees"
+                                        }
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number",
+                                          "minimum": -180,
+                                          "maximum": 180,
+                                          "description": "WGS84 longitude in degrees"
+                                        },
+                                        {
+                                          "type": "number",
+                                          "minimum": -90,
+                                          "maximum": 90,
+                                          "description": "WGS84 latitude in degrees"
+                                        },
+                                        { "type": "number" }
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
+                                    }
+                                  ],
+                                  "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                                }
+                              }
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON MultiLineString"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": { "type": "string", "const": "Polygon" },
+                            "coordinates": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "minItems": 4,
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number",
+                                          "minimum": -180,
+                                          "maximum": 180,
+                                          "description": "WGS84 longitude in degrees"
+                                        },
+                                        {
+                                          "type": "number",
+                                          "minimum": -90,
+                                          "maximum": 90,
+                                          "description": "WGS84 latitude in degrees"
+                                        }
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number",
+                                          "minimum": -180,
+                                          "maximum": 180,
+                                          "description": "WGS84 longitude in degrees"
+                                        },
+                                        {
+                                          "type": "number",
+                                          "minimum": -90,
+                                          "maximum": 90,
+                                          "description": "WGS84 latitude in degrees"
+                                        },
+                                        { "type": "number" }
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
+                                    }
+                                  ],
+                                  "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                                },
+                                "description": "Closed linear ring (at least 4 positions, first = last)"
+                              }
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON Polygon"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "MultiPolygon"
+                            },
+                            "coordinates": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "minItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "minItems": 4,
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": [
+                                          {
+                                            "type": "number",
+                                            "minimum": -180,
+                                            "maximum": 180,
+                                            "description": "WGS84 longitude in degrees"
+                                          },
+                                          {
+                                            "type": "number",
+                                            "minimum": -90,
+                                            "maximum": 90,
+                                            "description": "WGS84 latitude in degrees"
+                                          }
+                                        ],
+                                        "additionalItems": false,
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                      },
+                                      {
+                                        "type": "array",
+                                        "items": [
+                                          {
+                                            "type": "number",
+                                            "minimum": -180,
+                                            "maximum": 180,
+                                            "description": "WGS84 longitude in degrees"
+                                          },
+                                          {
+                                            "type": "number",
+                                            "minimum": -90,
+                                            "maximum": 90,
+                                            "description": "WGS84 latitude in degrees"
+                                          },
+                                          { "type": "number" }
+                                        ],
+                                        "additionalItems": false,
+                                        "minItems": 3,
+                                        "maxItems": 3
+                                      }
+                                    ],
+                                    "description": "Position [lon, lat] or [lon, lat, altitude] in WGS84 degrees"
+                                  },
+                                  "description": "Closed linear ring (at least 4 positions, first = last)"
+                                }
+                              }
+                            }
+                          },
+                          "required": ["type", "coordinates"],
+                          "description": "GeoJSON MultiPolygon"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": ["type", "geometries"],
+                "description": "GeoJSON GeometryCollection"
+              }
+            ],
+            "description": "Zone geometry, GeoJSON in WGS84"
+          },
+          "bufferM": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Buffer around the geometry in meters, e.g. 1 750 for the pipeline"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Inactive zones are ignored by detectors"
+          },
+          "alertOnEnter": {
+            "type": "boolean",
+            "description": "Raise geofence alerts when a vessel enters the zone"
+          },
+          "properties": {
+            "type": "object",
+            "propertyNames": { "type": "string" },
+            "additionalProperties": {},
+            "description": "Kind specific properties, e.g. the KP names of a pipeline"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "code",
+          "name",
+          "kind",
+          "geometry",
+          "bufferM",
+          "active",
+          "alertOnEnter",
+          "properties",
+          "updatedAt"
+        ],
+        "title": "ZoneSnapshotV1",
+        "description": "Latest full snapshot of a zone or geofence (stream GEO keeps one message per zone)."
+      },
+      "ZoneDeletedV1": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "Zone id"
+          },
+          "orgId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "description": "UUID"
+              },
+              { "type": "null" }
+            ],
+            "description": "Owning organization; null = global zone"
+          }
+        },
+        "required": ["id", "orgId"],
+        "title": "ZoneDeletedV1",
+        "description": "A zone was deleted from the geo registry."
+      },
+      "SafetyVesselStateV1": {
+        "type": "object",
+        "properties": {
+          "mmsi": {
+            "type": "integer",
+            "minimum": 100000000,
+            "maximum": 999999999,
+            "description": "Maritime Mobile Service Identity (9 digits)"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "Time of the position the state was evaluated for"
+          },
+          "ewsStatus": {
+            "anyOf": [
+              { "type": "number", "const": 0 },
+              { "type": "number", "const": 1 },
+              { "type": "number", "const": 3 }
+            ],
+            "description": "Pipeline EWS status: 0 danger, 1 warning, 3 safe"
+          },
+          "pipelineDistanceM": {
+            "anyOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }],
+            "description": "Distance to the nearest active pipeline zone in meters; null when none is known"
+          },
+          "nearestPipelineZoneId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "description": "UUID"
+              },
+              { "type": "null" }
+            ],
+            "description": "Pipeline zone the distance refers to"
+          },
+          "collisionRisk": {
+            "type": "string",
+            "enum": ["none", "low", "medium", "high"],
+            "description": "Collision risk band from CPA / TCPA: none, low, medium, high"
+          },
+          "closestEncounter": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "otherMmsi": {
+                    "type": "integer",
+                    "minimum": 100000000,
+                    "maximum": 999999999,
+                    "description": "The other vessel of the encounter"
+                  },
+                  "cpaNm": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Distance at the closest point of approach (CPA), nm"
+                  },
+                  "tcpaMin": {
+                    "type": "number",
+                    "description": "Time to the closest point of approach (TCPA), minutes"
+                  }
+                },
+                "required": ["otherMmsi", "cpaNm", "tcpaMin"],
+                "description": "Closest encounter with another vessel (CPA / TCPA)"
+              },
+              { "type": "null" }
+            ]
+          },
+          "methodIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+              "description": "Method id of the methodology catalog, e.g. \"cii.attained\""
+            },
+            "description": "Methodology catalog ids of the methods behind the state"
+          }
+        },
+        "required": [
+          "mmsi",
+          "time",
+          "ewsStatus",
+          "pipelineDistanceM",
+          "nearestPipelineZoneId",
+          "collisionRisk",
+          "closestEncounter",
+          "methodIds"
+        ],
+        "title": "SafetyVesselStateV1",
+        "description": "Latest navigational safety state of a vessel: pipeline EWS status and collision risk (stream SAFETY keeps one message per vessel). Published on every change and at most every SAFETY_STATE_HEARTBEAT_S otherwise."
+      },
       "CiiUpdatedV1": {
         "type": "object",
         "properties": {
@@ -1541,15 +2646,22 @@
           },
           "type": {
             "type": "string",
-            "enum": [
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Alert type: a registry type (ALERT_TYPES) or a future type; consumers accept unknown types",
+            "examples": [
               "ews",
+              "collision",
               "transhipment",
               "anomaly",
               "dark",
               "geofence",
               "fishing"
-            ],
-            "description": "Alert type"
+            ]
+          },
+          "domain": {
+            "type": "string",
+            "enum": ["safety", "surveillance"],
+            "description": "Analytics domain: safety or surveillance"
           },
           "severity": {
             "type": "string",
@@ -1572,7 +2684,7 @@
               },
               { "type": "null" }
             ],
-            "description": "Second vessel involved (e.g. transhipment)"
+            "description": "Second vessel involved (e.g. collision, transhipment)"
           },
           "title": { "type": "string", "minLength": 1 },
           "message": { "type": "string" },
@@ -1607,7 +2719,7 @@
           "dedupKey": {
             "type": "string",
             "minLength": 1,
-            "description": "Open alerts with the same key are merged, e.g. \"ews:<mmsi>\""
+            "description": "Open alerts with the same key are merged, e.g. \"ews:<mmsi>:<zoneId>\""
           },
           "zoneId": {
             "anyOf": [
@@ -1620,6 +2732,11 @@
               { "type": "null" }
             ]
           },
+          "methodId": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+            "description": "Methodology catalog id of the rule that raised the alert (spec 17)"
+          },
           "data": {
             "type": "object",
             "propertyNames": { "type": "string" },
@@ -1630,6 +2747,7 @@
         "required": [
           "id",
           "type",
+          "domain",
           "severity",
           "mmsi",
           "relatedMmsi",
@@ -1640,10 +2758,11 @@
           "occurredAt",
           "dedupKey",
           "zoneId",
+          "methodId",
           "data"
         ],
         "title": "AlertRaisedV1",
-        "description": "An alert raised by ais-processor (ews) or detection."
+        "description": "An alert raised by a safety or surveillance detector (alert type registry ALERT_TYPES)."
       },
       "EmailRequestedV1": {
         "type": "object",
@@ -1784,7 +2903,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -1833,7 +2952,7 @@
       "AisPositionRecordedV1": {
         "name": "ais.position.recorded.v1",
         "title": "AisPositionRecordedV1",
-        "summary": "A recorded vessel position enriched with predicted navstatus, EWS status and distances.",
+        "summary": "A recorded vessel position enriched with the predicted navstatus and the coast distance (AIS data only, no safety fields).",
         "contentType": "application/json",
         "headers": { "$ref": "#/components/schemas/NatsHeaders" },
         "payload": {
@@ -1862,7 +2981,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -1901,9 +3020,7 @@
                 "hdg": 75,
                 "navstatus": 0,
                 "predictedNavstatus": 0,
-                "ewsStatus": 3,
                 "coastDistanceM": 2380.5,
-                "pipelineDistanceM": 5120.2,
                 "previous": {
                   "time": "2026-11-20T08:29:00.000Z",
                   "lat": 1.1902,
@@ -1951,7 +3068,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2024,7 +3141,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2091,6 +3208,7 @@
                   "capacityUnit": "DWT",
                   "a": 4745,
                   "c": 0.622,
+                  "capacityFixed": null,
                   "d": { "d1": 0.86, "d2": 0.94, "d3": 1.06, "d4": 1.18 }
                 },
                 "fuel": {
@@ -2163,7 +3281,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2195,6 +3313,239 @@
                 "id": "01a1f8c2-54d9-7223-9107-543e8d90de1c",
                 "mmsi": 525005223,
                 "orgId": "01a1f8c2-54d8-71c4-95cf-ab5eb8908e00"
+              }
+            }
+          }
+        ]
+      },
+      "ZoneSnapshotV1": {
+        "name": "geo.zone.upserted.v1",
+        "title": "ZoneSnapshotV1",
+        "summary": "The full current snapshot of a created or changed zone.",
+        "contentType": "application/json",
+        "headers": { "$ref": "#/components/schemas/NatsHeaders" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "description": "Event id (UUID v7); also the Nats-Msg-Id header"
+            },
+            "type": {
+              "type": "string",
+              "const": "geo.zone.upserted.v1",
+              "description": "Event type, e.g. \"ais.position.recorded.v1\""
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SERVICE_NAME of the producer"
+            },
+            "time": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "description": "When the event was produced"
+            },
+            "subject": {
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
+              "type": "string",
+              "minLength": 1
+            },
+            "traceparent": {
+              "description": "W3C trace context of the producer",
+              "type": "string",
+              "pattern": "^[\\da-f]{2}-[\\da-f]{32}-[\\da-f]{16}-[\\da-f]{2}$"
+            },
+            "data": { "$ref": "#/components/schemas/ZoneSnapshotV1" }
+          },
+          "required": ["id", "type", "source", "time", "data"],
+          "title": "ZoneSnapshotV1 envelope"
+        },
+        "examples": [
+          {
+            "name": "example",
+            "headers": {
+              "Nats-Msg-Id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            },
+            "payload": {
+              "id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "type": "geo.zone.upserted.v1",
+              "source": "geo",
+              "time": "2026-11-20T08:30:01.000Z",
+              "subject": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+              "data": {
+                "id": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "orgId": null,
+                "code": "pipeline-kp27-kp29",
+                "name": "Subsea pipeline KP 27-29",
+                "kind": "pipeline",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [112.719384869178, -6.87197219605424],
+                    [112.719433852143, -6.86293886272091],
+                    [112.719446655722, -6.85389719605424]
+                  ]
+                },
+                "bufferM": 1750,
+                "active": true,
+                "alertOnEnter": false,
+                "properties": {
+                  "kpNames": ["KP 29.200", "KP 28.200", "KP 27.200"],
+                  "provenance": "legacy data/pipeline.json"
+                },
+                "updatedAt": "2026-11-20T06:00:00.000Z"
+              }
+            }
+          }
+        ]
+      },
+      "ZoneDeletedV1": {
+        "name": "geo.zone.deleted.v1",
+        "title": "ZoneDeletedV1",
+        "summary": "A zone was deleted (tombstone of the snapshot).",
+        "contentType": "application/json",
+        "headers": { "$ref": "#/components/schemas/NatsHeaders" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "description": "Event id (UUID v7); also the Nats-Msg-Id header"
+            },
+            "type": {
+              "type": "string",
+              "const": "geo.zone.deleted.v1",
+              "description": "Event type, e.g. \"ais.position.recorded.v1\""
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SERVICE_NAME of the producer"
+            },
+            "time": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "description": "When the event was produced"
+            },
+            "subject": {
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
+              "type": "string",
+              "minLength": 1
+            },
+            "traceparent": {
+              "description": "W3C trace context of the producer",
+              "type": "string",
+              "pattern": "^[\\da-f]{2}-[\\da-f]{32}-[\\da-f]{16}-[\\da-f]{2}$"
+            },
+            "data": { "$ref": "#/components/schemas/ZoneDeletedV1" }
+          },
+          "required": ["id", "type", "source", "time", "data"],
+          "title": "ZoneDeletedV1 envelope"
+        },
+        "examples": [
+          {
+            "name": "example",
+            "headers": {
+              "Nats-Msg-Id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            },
+            "payload": {
+              "id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "type": "geo.zone.deleted.v1",
+              "source": "geo",
+              "time": "2026-11-20T08:30:01.000Z",
+              "subject": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+              "data": {
+                "id": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "orgId": null
+              }
+            }
+          }
+        ]
+      },
+      "SafetyVesselStateV1": {
+        "name": "safety.vessel_state.updated.v1",
+        "title": "SafetyVesselStateV1",
+        "summary": "The navigational safety state of a vessel (EWS status, collision risk), on change and as a heartbeat.",
+        "contentType": "application/json",
+        "headers": { "$ref": "#/components/schemas/NatsHeaders" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "description": "Event id (UUID v7); also the Nats-Msg-Id header"
+            },
+            "type": {
+              "type": "string",
+              "const": "safety.vessel_state.updated.v1",
+              "description": "Event type, e.g. \"ais.position.recorded.v1\""
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SERVICE_NAME of the producer"
+            },
+            "time": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "description": "When the event was produced"
+            },
+            "subject": {
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
+              "type": "string",
+              "minLength": 1
+            },
+            "traceparent": {
+              "description": "W3C trace context of the producer",
+              "type": "string",
+              "pattern": "^[\\da-f]{2}-[\\da-f]{32}-[\\da-f]{16}-[\\da-f]{2}$"
+            },
+            "data": { "$ref": "#/components/schemas/SafetyVesselStateV1" }
+          },
+          "required": ["id", "type", "source", "time", "data"],
+          "title": "SafetyVesselStateV1 envelope"
+        },
+        "examples": [
+          {
+            "name": "example",
+            "headers": {
+              "Nats-Msg-Id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            },
+            "payload": {
+              "id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "type": "safety.vessel_state.updated.v1",
+              "source": "safety",
+              "time": "2026-11-20T08:30:01.000Z",
+              "subject": "525005223",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+              "data": {
+                "mmsi": 525005223,
+                "time": "2026-11-20T08:31:00.000Z",
+                "ewsStatus": 0,
+                "pipelineDistanceM": 312.4,
+                "nearestPipelineZoneId": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "collisionRisk": "low",
+                "closestEncounter": {
+                  "otherMmsi": 525019876,
+                  "cpaNm": 0.82,
+                  "tcpaMin": 14.5
+                },
+                "methodIds": ["ews.status", "collision.cpa-tcpa"]
               }
             }
           }
@@ -2232,7 +3583,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2283,7 +3634,7 @@
       "AlertRaisedV1": {
         "name": "alert.raised.v1",
         "title": "AlertRaisedV1",
-        "summary": "An alert raised by EWS (ais-processor) or a detector (detection).",
+        "summary": "An alert raised by a safety (ews, collision) or surveillance (transhipment, anomaly, dark, geofence, fishing) detector.",
         "contentType": "application/json",
         "headers": { "$ref": "#/components/schemas/NatsHeaders" },
         "payload": {
@@ -2312,7 +3663,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2336,27 +3687,29 @@
             "payload": {
               "id": "01a1f8c2-54dc-7f00-8a00-000000000001",
               "type": "alert.raised.v1",
-              "source": "ais-processor",
+              "source": "safety",
               "time": "2026-11-20T08:30:01.000Z",
               "subject": "525005223",
               "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
               "data": {
                 "id": "01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5b",
                 "type": "ews",
+                "domain": "safety",
                 "severity": "critical",
                 "mmsi": 525005223,
                 "relatedMmsi": null,
-                "title": "Anchored within 500 m of the pipeline",
-                "message": "KM Sinar Batam reports at anchor 312 m from the pipeline.",
-                "lat": 1.1301,
-                "lon": 104.0305,
+                "title": "At anchor within 500 m of the pipeline",
+                "message": "KM Sinar Batam is predicted at anchor 312 m from the pipeline (KP 28.200).",
+                "lat": -6.8629,
+                "lon": 112.7166,
                 "occurredAt": "2026-11-20T08:31:00.000Z",
-                "dedupKey": "ews:525005223",
-                "zoneId": null,
+                "dedupKey": "ews:525005223:01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "zoneId": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "methodId": "ews.status",
                 "data": {
                   "ewsStatus": 0,
                   "pipelineDistanceM": 312.4,
-                  "navstatus": 1
+                  "predictedNavstatus": 1
                 }
               }
             }
@@ -2395,7 +3748,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },
@@ -2469,7 +3822,7 @@
               "description": "When the event was produced"
             },
             "subject": {
-              "description": "Entity key: mmsi, vesselId, …",
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
               "type": "string",
               "minLength": 1
             },

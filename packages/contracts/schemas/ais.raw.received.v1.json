@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/ais.raw.received.v1.json",
+  "$id": "urn:ais-its:schema:events:ais.raw.received.v1",
   "title": "AisRawReceivedV1",
   "description": "Payload (\"data\") of ais.raw.received.v1. A validated, normalized AIS position report from a feed.",
   "type": "object",

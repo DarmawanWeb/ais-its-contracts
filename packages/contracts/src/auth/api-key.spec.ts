@@ -13,6 +13,7 @@ import {
   isApiKey,
   isApiKeyScope,
   maskApiKey,
+  parseScopes,
   parseApiKey,
 } from './api-key.js';
 
@@ -96,12 +97,35 @@ describe('API key scopes and introspection', () => {
     expect(ApiKeyIntrospectionResultSchema.parse({ active: false })).toEqual({
       active: false,
     });
+    // Unknown scopes are dropped (forward compatible), malformed ones refused.
     expect(
-      ApiKeyIntrospectionResultSchema.safeParse({ ...active, scopes: ['root'] })
+      ApiKeyIntrospectionResultSchema.parse({ ...active, scopes: ['root'] }),
+    ).toEqual({ ...active, scopes: [] });
+    expect(
+      ApiKeyIntrospectionResultSchema.safeParse({ ...active, scopes: [1] })
         .success,
     ).toBe(false);
     expect(
       ApiKeyIntrospectionResultSchema.safeParse({ active: true }).success,
     ).toBe(false);
+  });
+});
+
+describe('API key introspection forward compatibility', () => {
+  it('drops scopes this contracts version does not know', () => {
+    const parsed = ApiKeyIntrospectionResultSchema.safeParse({
+      active: true,
+      keyId: '018f2b5e-0000-7000-8000-000000000001',
+      orgId: '018f2b5e-0000-7000-8000-000000000002',
+      scopes: ['ais:ingest', 'fleet:sync', 'ais:ingest'],
+      name: 'pusher',
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.active && parsed.data.scopes).toEqual([
+      'ais:ingest',
+    ]);
+    expect(parseScopes(['telemetry:ingest', 'future:scope'])).toEqual([
+      'telemetry:ingest',
+    ]);
   });
 });

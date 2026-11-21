@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/event-envelope.json",
+  "$id": "urn:ais-its:schema:events:event-envelope",
   "title": "EventEnvelope",
   "type": "object",
   "properties": {
@@ -27,7 +27,7 @@
       "description": "When the event was produced"
     },
     "subject": {
-      "description": "Entity key: mmsi, vesselId, …",
+      "description": "Entity key: mmsi, vesselId, zoneId, …",
       "type": "string",
       "minLength": 1
     },

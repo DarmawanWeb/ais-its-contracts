@@ -41,6 +41,10 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # First: the nest kit lints, typechecks and tests against the contracts' dist/.
+      - name: Build
+        run: pnpm build
+
       - name: Format
         run: pnpm format:check
 
@@ -50,11 +54,10 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # Unit tests plus the integration tests of packages/nest (Docker: TimescaleDB/PostGIS,
+      # NATS, Valkey, RustFS, Mailpit through testcontainers).
       - name: Test
         run: pnpm test
-
-      - name: Build
-        run: pnpm build
 
       - name: Generated artifacts are up to date
         run: pnpm schemas:check

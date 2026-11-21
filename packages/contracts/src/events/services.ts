@@ -9,7 +9,9 @@ export const SERVICE_NAMES = [
   'ais-processor',
   'telemetry',
   'emission',
-  'detection',
+  'geo',
+  'safety',
+  'surveillance',
   'notification',
 ] as const;
 

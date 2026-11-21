@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/fleet.vessel.deleted.v1.json",
+  "$id": "urn:ais-its:schema:events:fleet.vessel.deleted.v1",
   "title": "VesselDeletedV1",
   "description": "Payload (\"data\") of fleet.vessel.deleted.v1. A vessel was deleted from the fleet registry.",
   "type": "object",

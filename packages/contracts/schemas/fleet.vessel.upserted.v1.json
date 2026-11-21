@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/fleet.vessel.upserted.v1.json",
+  "$id": "urn:ais-its:schema:events:fleet.vessel.upserted.v1",
   "title": "VesselSnapshotV1",
   "description": "Payload (\"data\") of fleet.vessel.upserted.v1. Latest full snapshot of a vessel (stream FLEET keeps one message per vessel).",
   "type": "object",
@@ -180,6 +180,13 @@
           "description": "Reference line parameter a"
         },
         "c": { "type": "number", "description": "Reference line parameter c" },
+        "capacityFixed": {
+          "description": "Regulation-fixed CII capacity of the size band, e.g. 279 000 for bulk carriers of 279 000 DWT and above (MEPC.353(78)); used instead of dimensions.capacity when set",
+          "anyOf": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "null" }
+          ]
+        },
         "d": {
           "type": "object",
           "properties": {

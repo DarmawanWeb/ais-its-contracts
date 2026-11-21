@@ -77,9 +77,9 @@ export function isPlatformAdmin(principal: Principal): boolean {
 }
 
 /**
- * `true` for users with cross-tenant surveillance access (`authority` or
- * `super_admin`): they see every detection and alert and join the realtime
- * `authority` room (spec 8.5, 9).
+ * `true` for users with cross-tenant safety and surveillance access
+ * (`authority` or `super_admin`): they see every safety and surveillance
+ * event and alert and join the realtime `authority` room (spec 8.5, 9).
  */
 export function hasAuthorityAccess(principal: Principal): boolean {
   return (

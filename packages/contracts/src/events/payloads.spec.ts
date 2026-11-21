@@ -46,11 +46,6 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
       path: 'predictedNavstatus',
     },
     {
-      name: 'ewsStatus 2 (unused code)',
-      patch: { ewsStatus: 2 },
-      path: 'ewsStatus',
-    },
-    {
       name: 'negative coast distance',
       patch: { coastDistanceM: -1 },
       path: 'coastDistanceM',
@@ -137,6 +132,16 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
       patch: { portIds: ['tanjung-priok'] },
       path: 'portIds.0',
     },
+    {
+      name: 'zero fixed capacity',
+      patch: {
+        type: {
+          ...EVENT_EXAMPLES['fleet.vessel.upserted.v1'].type,
+          capacityFixed: 0,
+        },
+      },
+      path: 'type.capacityFixed',
+    },
   ],
   'fleet.vessel.deleted.v1': [
     {
@@ -145,6 +150,96 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
       path: 'orgId',
     },
     { name: 'MMSI too large', patch: { mmsi: 1_000_000_000 }, path: 'mmsi' },
+  ],
+  'geo.zone.upserted.v1': [
+    { name: 'unknown kind', patch: { kind: 'wreck' }, path: 'kind' },
+    { name: 'negative buffer', patch: { bufferM: -1 }, path: 'bufferM' },
+    { name: 'empty code', patch: { code: '' }, path: 'code' },
+    {
+      name: 'missing orgId (must be null for global zones)',
+      patch: { orgId: undefined },
+      path: 'orgId',
+    },
+    {
+      name: 'line with one position',
+      patch: { geometry: { type: 'LineString', coordinates: [[112.7, -6.8]] } },
+      path: 'geometry.coordinates',
+    },
+    {
+      name: 'latitude out of range',
+      patch: { geometry: { type: 'Point', coordinates: [112.7, -96.8] } },
+      path: 'geometry.coordinates.1',
+    },
+    {
+      name: 'unclosed polygon ring',
+      patch: {
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [103.4, 0.6],
+              [103.5, 0.6],
+              [103.5, 0.7],
+              [103.4, 0.7],
+            ],
+          ],
+        },
+      },
+      path: 'geometry.coordinates.0',
+    },
+    {
+      name: 'unknown geometry type',
+      patch: { geometry: { type: 'Circle', coordinates: [112.7, -6.8] } },
+      path: 'geometry.type',
+    },
+    {
+      name: 'properties is an array',
+      patch: { properties: ['KP 29.200'] },
+      path: 'properties',
+    },
+  ],
+  'geo.zone.deleted.v1': [
+    { name: 'non-uuid id', patch: { id: 'pipeline' }, path: 'id' },
+    { name: 'missing orgId', patch: { orgId: undefined }, path: 'orgId' },
+  ],
+  'safety.vessel_state.updated.v1': [
+    {
+      name: 'ewsStatus 2 (unused code)',
+      patch: { ewsStatus: 2 },
+      path: 'ewsStatus',
+    },
+    {
+      name: 'unknown collision risk',
+      patch: { collisionRisk: 'extreme' },
+      path: 'collisionRisk',
+    },
+    {
+      name: 'negative pipeline distance',
+      patch: { pipelineDistanceM: -3 },
+      path: 'pipelineDistanceM',
+    },
+    {
+      name: 'negative CPA',
+      patch: {
+        closestEncounter: { otherMmsi: 525019876, cpaNm: -0.1, tcpaMin: 3 },
+      },
+      path: 'closestEncounter.cpaNm',
+    },
+    {
+      name: 'encounter without the other vessel',
+      patch: { closestEncounter: { cpaNm: 0.1, tcpaMin: 3 } },
+      path: 'closestEncounter.otherMmsi',
+    },
+    {
+      name: 'malformed method id',
+      patch: { methodIds: ['EWS Status'] },
+      path: 'methodIds.0',
+    },
+    {
+      name: 'missing nearestPipelineZoneId (must be null)',
+      patch: { nearestPipelineZoneId: undefined },
+      path: 'nearestPipelineZoneId',
+    },
   ],
   'emission.cii.updated.v1': [
     { name: 'grade F', patch: { grade: 'F' }, path: 'grade' },
@@ -157,7 +252,24 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
     { name: 'fractional year', patch: { year: 2026.5 }, path: 'year' },
   ],
   'alert.raised.v1': [
-    { name: 'unknown type', patch: { type: 'collision' }, path: 'type' },
+    { name: 'malformed type', patch: { type: 'Collision Risk' }, path: 'type' },
+    { name: 'type with a dot', patch: { type: 'ews.v2' }, path: 'type' },
+    { name: 'unknown domain', patch: { domain: 'emission' }, path: 'domain' },
+    {
+      name: 'domain of another registry type',
+      patch: { domain: 'surveillance' },
+      path: 'domain',
+    },
+    {
+      name: 'missing methodId',
+      patch: { methodId: undefined },
+      path: 'methodId',
+    },
+    {
+      name: 'malformed methodId',
+      patch: { methodId: 'EWS' },
+      path: 'methodId',
+    },
     { name: 'unknown severity', patch: { severity: 'high' }, path: 'severity' },
     { name: 'empty dedupKey', patch: { dedupKey: '' }, path: 'dedupKey' },
     { name: 'data is an array', patch: { data: [1, 2] }, path: 'data' },
@@ -249,7 +361,6 @@ describe('event payload schemas (spec 7.4)', () => {
       ...EVENT_EXAMPLES['ais.position.recorded.v1'],
       hdg: 511,
       coastDistanceM: null,
-      pipelineDistanceM: null,
       previous: null,
     };
     expect(validateEvent('ais.position.recorded.v1', position).success).toBe(
@@ -270,5 +381,135 @@ describe('event payload schemas (spec 7.4)', () => {
       reason: 'unknown_type',
       type: 'ais.raw.received.v9',
     });
+  });
+});
+
+describe('spec 1.1 payload changes', () => {
+  it('records positions without safety fields', () => {
+    const result = validateEvent('ais.position.recorded.v1', {
+      ...EVENT_EXAMPLES['ais.position.recorded.v1'],
+      ewsStatus: 0,
+      pipelineDistanceM: 12,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty('ewsStatus');
+      expect(result.data).not.toHaveProperty('pipelineDistanceM');
+    }
+  });
+
+  it('parses alerts of future types raised by newer detectors', () => {
+    const result = validateEvent('alert.raised.v1', {
+      ...EVENT_EXAMPLES['alert.raised.v1'],
+      type: 'anchor_dragging',
+      domain: 'safety',
+      methodId: 'safety.anchor-dragging',
+    });
+    expect(result).toMatchObject({
+      success: true,
+      data: { type: 'anchor_dragging', domain: 'safety' },
+    });
+    const surveillance = validateEvent('alert.raised.v1', {
+      ...EVENT_EXAMPLES['alert.raised.v1'],
+      type: 'spoofing',
+      domain: 'surveillance',
+    });
+    expect(surveillance.success).toBe(true);
+  });
+
+  it('checks the registry domain of known alert types', () => {
+    const collision = {
+      ...EVENT_EXAMPLES['alert.raised.v1'],
+      type: 'collision',
+      domain: 'safety',
+      relatedMmsi: 525019876,
+      dedupKey: 'collision:525005223:525019876',
+    };
+    expect(validateEvent('alert.raised.v1', collision).success).toBe(true);
+    const mismatch = validateEvent('alert.raised.v1', {
+      ...collision,
+      type: 'transhipment',
+    });
+    expect(mismatch).toMatchObject({
+      success: false,
+      issues: [
+        {
+          field: 'domain',
+          message: 'Alert type "transhipment" belongs to domain "surveillance"',
+        },
+      ],
+    });
+  });
+
+  it('accepts an optional fixed capacity on the ship type', () => {
+    const vessel = EVENT_EXAMPLES['fleet.vessel.upserted.v1'];
+    const { capacityFixed: _omitted, ...typeWithout } = vessel.type;
+    for (const type of [
+      typeWithout,
+      { ...vessel.type, capacityFixed: null },
+      { ...vessel.type, capacityFixed: 279_000 },
+    ]) {
+      expect(
+        validateEvent('fleet.vessel.upserted.v1', { ...vessel, type }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('accepts every GeoJSON geometry type as a zone geometry', () => {
+    const zone = EVENT_EXAMPLES['geo.zone.upserted.v1'];
+    const ring = [
+      [103.48, 0.62],
+      [103.52, 0.69],
+      [103.46, 0.64],
+      [103.48, 0.62],
+    ];
+    for (const geometry of [
+      { type: 'Point', coordinates: [104.03, 1.13] },
+      { type: 'MultiPoint', coordinates: [[104.03, 1.13]] },
+      {
+        type: 'LineString',
+        coordinates: [
+          [104.03, 1.13],
+          [104.1, 1.2, 5],
+        ],
+      },
+      {
+        type: 'MultiLineString',
+        coordinates: [
+          [
+            [104.03, 1.13],
+            [104.1, 1.2],
+          ],
+        ],
+      },
+      { type: 'Polygon', coordinates: [ring] },
+      { type: 'MultiPolygon', coordinates: [[ring], [ring]] },
+      {
+        type: 'GeometryCollection',
+        geometries: [
+          { type: 'Point', coordinates: [104.03, 1.13] },
+          { type: 'Polygon', coordinates: [ring] },
+        ],
+      },
+    ]) {
+      const result = validateEvent('geo.zone.upserted.v1', {
+        ...zone,
+        geometry,
+      });
+      expect(result.success, geometry.type).toBe(true);
+    }
+  });
+
+  it('accepts a vessel state without pipeline or encounter', () => {
+    const result = validateEvent('safety.vessel_state.updated.v1', {
+      ...EVENT_EXAMPLES['safety.vessel_state.updated.v1'],
+      ewsStatus: 3,
+      pipelineDistanceM: null,
+      nearestPipelineZoneId: null,
+      collisionRisk: 'none',
+      closestEncounter: null,
+      methodIds: [],
+    });
+    expect(result.success).toBe(true);
   });
 });

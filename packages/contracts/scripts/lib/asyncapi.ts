@@ -25,6 +25,8 @@ const CHANNEL_IDS: Readonly<Record<StreamName, string>> = {
   AIS_POSITION: 'aisPosition',
   FUEL: 'fuelReading',
   FLEET: 'fleetVessel',
+  GEO: 'geoZone',
+  SAFETY: 'safetyState',
   EMISSION: 'ciiUpdated',
   ALERTS: 'alert',
   NOTIFY: 'notifyEmail',
@@ -35,6 +37,9 @@ const CHANNEL_IDS: Readonly<Record<StreamName, string>> = {
 const TELEMETRY_CHANNEL = 'telemetryMqtt';
 const DEAD_LETTER_MESSAGE = 'DeadLetter';
 const DEVICE_TELEMETRY_MESSAGE = 'DeviceTelemetry';
+
+/** Prefix of the AsyncAPI specification extensions of this document. */
+const EXTENSION = 'x-ais-its';
 
 /** Fixed metadata so the generated examples are deterministic. */
 const EXAMPLE_ID = '01a1f8c2-54dc-7f00-8a00-000000000001';
@@ -78,6 +83,9 @@ function channelOf(
           ...(parameter.enum === undefined
             ? {}
             : { enum: [...parameter.enum] }),
+          ...(parameter.examples === undefined
+            ? {}
+            : { examples: [...parameter.examples] }),
         },
       ]),
     ),
@@ -87,7 +95,7 @@ function channelOf(
         ref(`#/components/messages/${definition.payloadName}`),
       ]),
     ),
-    'x-seemp-stream': { ...config, subjects: [...config.subjects] },
+    [`${EXTENSION}-stream`]: { ...config, subjects: [...config.subjects] },
   };
 }
 
@@ -155,7 +163,7 @@ function operations(): JsonObject {
         channel: ref(`#/channels/${channel}`),
         summary: `Published by ${definition.producers.join(', ')}.`,
         messages: [messageRef(channel, definition.payloadName)],
-        'x-seemp-producers': [...definition.producers],
+        [`${EXTENSION}-producers`]: [...definition.producers],
       },
     ]);
   }
@@ -173,7 +181,7 @@ function operations(): JsonObject {
         messages: consumer.eventTypes.map((type) =>
           messageRef(channel, payloadNameOf(type)),
         ),
-        'x-seemp-consumer': {
+        [`${EXTENSION}-consumer`]: {
           kind: 'durable',
           durableName: consumer.durableName,
           service: consumer.service,
@@ -196,7 +204,7 @@ function operations(): JsonObject {
         messages: consumer.eventTypes.map((type) =>
           messageRef(channel, payloadNameOf(type)),
         ),
-        'x-seemp-consumer': {
+        [`${EXTENSION}-consumer`]: {
           kind: 'ordered',
           service: consumer.service,
           stream: consumer.stream,
@@ -223,7 +231,7 @@ function operations(): JsonObject {
         channel: ref(`#/channels/${TELEMETRY_CHANNEL}`),
         summary: `${subscription.service}: ${subscription.description}`,
         messages: [messageRef(TELEMETRY_CHANNEL, DEVICE_TELEMETRY_MESSAGE)],
-        'x-seemp-consumer': {
+        [`${EXTENSION}-consumer`]: {
           kind: 'core',
           service: subscription.service,
           subject: subscription.subject,
@@ -270,13 +278,16 @@ export function buildAsyncApiDocument(options: AsyncApiOptions): JsonObject {
         `#/components/messages/${DEAD_LETTER_MESSAGE}`,
       ),
     },
-    'x-seemp-stream': { ...STREAMS.DLQ, subjects: [...STREAMS.DLQ.subjects] },
+    [`${EXTENSION}-stream`]: {
+      ...STREAMS.DLQ,
+      subjects: [...STREAMS.DLQ.subjects],
+    },
   };
   channels[TELEMETRY_CHANNEL] = {
-    address: 'seemp.telemetry.{deviceId}',
+    address: 'aisits.telemetry.{deviceId}',
     title: 'Device telemetry (core NATS)',
     description:
-      'Core NATS subject of MQTT topic seemp/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.',
+      'Core NATS subject of MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.',
     parameters: { deviceId: { description: 'Registered device id.' } },
     messages: {
       [DEVICE_TELEMETRY_MESSAGE]: ref(
@@ -336,10 +347,10 @@ export function buildAsyncApiDocument(options: AsyncApiOptions): JsonObject {
   return {
     asyncapi: '3.0.0',
     info: {
-      title: 'SEEMP Platform Events',
+      title: 'AIS Maritime Intelligence Events',
       version: options.version,
       description:
-        'NATS JetStream contracts of the SEEMP platform v2 (spec section 7), generated from @darmawanweb/seemp-contracts. Every message is a JSON event envelope; "data" follows the payload schema of its "type".',
+        'NATS JetStream contracts of AIS Maritime Intelligence v2 (spec section 7), generated from @darmawanweb/ais-its-contracts. Every message is a JSON event envelope; "data" follows the payload schema of its "type".',
       license: { name: 'UNLICENSED' },
     },
     defaultContentType: 'application/json',

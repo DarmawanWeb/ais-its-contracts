@@ -36,6 +36,33 @@ const fleetProjection = (
   description: `Vessel projection (mmsi → vesselId, orgId) of ${service}.`,
 });
 
+const zoneProjection = (
+  durableName: string,
+  service: ServiceName,
+): DurableConsumerDefinition => ({
+  durableName,
+  stream: 'GEO',
+  filterSubjects: [SUBJECT_FILTERS.GEO_ZONE],
+  service,
+  eventTypes: [EVENT_TYPES.GEO_ZONE_UPSERTED, EVENT_TYPES.GEO_ZONE_DELETED],
+  maxDeliver: DEFAULT_MAX_DELIVER,
+  description: `Zone projection with a spatial index (ZoneIndex) of ${service}.`,
+});
+
+const positionFeed = (
+  durableName: string,
+  service: ServiceName,
+  description: string,
+): DurableConsumerDefinition => ({
+  durableName,
+  stream: 'AIS_POSITION',
+  filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
+  service,
+  eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
+  maxDeliver: DEFAULT_MAX_DELIVER,
+  description,
+});
+
 /** Every durable consumer of spec 7.3, keyed by durable name. */
 export const CONSUMERS = {
   'ais-processor': {
@@ -47,25 +74,21 @@ export const CONSUMERS = {
     maxDeliver: DEFAULT_MAX_DELIVER,
     description: 'Enriches and records raw AIS reports.',
   },
-  'emission-positions': {
-    durableName: 'emission-positions',
-    stream: 'AIS_POSITION',
-    filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
-    service: 'emission',
-    eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
-    maxDeliver: DEFAULT_MAX_DELIVER,
-    description: 'Builds voyage segments (fuel, CO2, CII) from positions.',
-  },
-  'detection-positions': {
-    durableName: 'detection-positions',
-    stream: 'AIS_POSITION',
-    filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
-    service: 'detection',
-    eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
-    maxDeliver: DEFAULT_MAX_DELIVER,
-    description:
-      'Feeds the transhipment, anomaly, dark, geofence and fishing detectors.',
-  },
+  'emission-positions': positionFeed(
+    'emission-positions',
+    'emission',
+    'Builds voyage segments (fuel, CO2, CII) from positions.',
+  ),
+  'safety-positions': positionFeed(
+    'safety-positions',
+    'safety',
+    'Feeds the navigational safety detectors (ews, collision).',
+  ),
+  'surveillance-positions': positionFeed(
+    'surveillance-positions',
+    'surveillance',
+    'Feeds the surveillance detectors (transhipment, anomaly, dark, geofence, fishing).',
+  ),
   'emission-fuel': {
     durableName: 'emission-fuel',
     stream: 'FUEL',
@@ -76,13 +99,16 @@ export const CONSUMERS = {
     description: 'Telemetry fuel readings for segment fuel estimation.',
   },
   'emission-fleet': fleetProjection('emission-fleet', 'emission'),
-  'detection-fleet': fleetProjection('detection-fleet', 'detection'),
+  'safety-fleet': fleetProjection('safety-fleet', 'safety'),
+  'surveillance-fleet': fleetProjection('surveillance-fleet', 'surveillance'),
   'notification-fleet': fleetProjection('notification-fleet', 'notification'),
   'telemetry-fleet': fleetProjection('telemetry-fleet', 'telemetry'),
   'ais-processor-fleet': fleetProjection(
     'ais-processor-fleet',
     'ais-processor',
   ),
+  'safety-zones': zoneProjection('safety-zones', 'safety'),
+  'surveillance-zones': zoneProjection('surveillance-zones', 'surveillance'),
   'notification-alerts': {
     durableName: 'notification-alerts',
     stream: 'ALERTS',
@@ -146,6 +172,15 @@ export const ORDERED_CONSUMERS: readonly OrderedConsumerDefinition[] = [
       'Realtime position fan-out to WebSocket tile and vessel rooms.',
   },
   {
+    name: 'notification-safety',
+    stream: 'SAFETY',
+    filterSubjects: [SUBJECT_FILTERS.SAFETY_STATE],
+    service: 'notification',
+    eventTypes: [EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED],
+    description:
+      'Realtime safety:states / vessel:safety fan-out to tile and vessel rooms.',
+  },
+  {
     name: 'notification-cii',
     stream: 'EMISSION',
     filterSubjects: [SUBJECT_FILTERS.CII_UPDATED],
@@ -170,7 +205,7 @@ export const CORE_SUBSCRIPTIONS: readonly CoreSubscriptionDefinition[] = [
     subject: SUBJECT_FILTERS.TELEMETRY_MQTT,
     service: 'telemetry',
     description:
-      'Raw device JSON from MQTT topic seemp/telemetry/<deviceId> (NATS MQTT gateway).',
+      'Raw device JSON from MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway).',
   },
 ];
 

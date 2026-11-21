@@ -6,8 +6,9 @@ import * as domain from './domain/index.js';
 import * as events from './events/index.js';
 import * as root from './index.js';
 import * as realtime from './realtime/index.js';
+import * as references from './references/index.js';
 
-const SUBPATHS = { api, auth, domain, events, realtime } as const;
+const SUBPATHS = { api, auth, domain, events, realtime, references } as const;
 
 describe('public entry points', () => {
   it('re-exports every subpath member from the root with the same identity', () => {
@@ -34,5 +35,7 @@ describe('public entry points', () => {
   it('keeps internal helpers private', () => {
     expect(root).not.toHaveProperty('eventFailure');
     expect(root).not.toHaveProperty('encodeBase64Url');
+    expect(root).not.toHaveProperty('openVocabularySchema');
+    expect(root).not.toHaveProperty('isKnownValue');
   });
 });

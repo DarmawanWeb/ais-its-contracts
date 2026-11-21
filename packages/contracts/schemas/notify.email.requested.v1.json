@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/notify.email.requested.v1.json",
+  "$id": "urn:ais-its:schema:events:notify.email.requested.v1",
   "title": "EmailRequestedV1",
   "description": "Payload (\"data\") of notify.email.requested.v1. Request to render and send a transactional e-mail.",
   "type": "object",

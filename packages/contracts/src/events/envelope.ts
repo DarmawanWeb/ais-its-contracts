@@ -21,7 +21,7 @@ export const ENVELOPE_SHAPE = {
     .string()
     .min(1)
     .optional()
-    .describe('Entity key: mmsi, vesselId, …'),
+    .describe('Entity key: mmsi, vesselId, zoneId, …'),
   traceparent: z
     .string()
     .regex(TRACEPARENT_PATTERN)
@@ -50,7 +50,7 @@ export interface EventEnvelope<TData = unknown, TType extends string = string> {
   readonly source: string;
   /** ISO-8601 UTC time the event was produced. */
   readonly time: string;
-  /** Entity key (mmsi, vesselId, …). */
+  /** Entity key (mmsi, vesselId, zoneId, …). */
   readonly subject?: string | undefined;
   /** W3C trace context, also sent as a NATS header. */
   readonly traceparent?: string | undefined;

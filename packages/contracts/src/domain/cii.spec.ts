@@ -8,6 +8,7 @@ import {
   assignCiiGrade,
   CII_GRADE_LABELS,
   CII_GRADES,
+  ciiCapacity,
   ciiGradeBoundaries,
   ciiGradeLabel,
   DdVectorSchema,
@@ -63,5 +64,22 @@ describe('CII grade helpers', () => {
     expect(DdVectorSchema.safeParse({ d1: 0.8, d2: 0.9, d3: 1 }).success).toBe(
       false,
     );
+  });
+});
+
+describe('ciiCapacity (spec 13.5)', () => {
+  const vessel = { dimensions: { capacity: 312_000 } };
+
+  it('uses the regulation-fixed capacity of the ship type when set', () => {
+    expect(ciiCapacity({ ...vessel, type: { capacityFixed: 279_000 } })).toBe(
+      279_000,
+    );
+  });
+
+  it('falls back to the capacity of the vessel', () => {
+    expect(ciiCapacity({ ...vessel, type: { capacityFixed: null } })).toBe(
+      312_000,
+    );
+    expect(ciiCapacity({ ...vessel, type: {} })).toBe(312_000);
   });
 });

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ais-its:schema:methodology:references",
+  "title": "Methodology references",
+  "description": "docs/references/references.json of the methodology catalog (spec 17), shipped as REFERENCES by @darmawanweb/ais-its-contracts/references.",
+  "anyOf": [
+    { "type": "array", "items": { "$ref": "#/$defs/entry" } },
+    {
+      "type": "object",
+      "properties": {
+        "$schema": { "type": "string" },
+        "references": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+      },
+      "required": ["references"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "description": "Reference id of the methodology catalog, e.g. \"imo-mepc-353-78\""
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Kind of source, e.g. regulation, standard, paper, thesis",
+          "examples": [
+            "regulation",
+            "guideline",
+            "standard",
+            "paper",
+            "book",
+            "thesis",
+            "report",
+            "dataset",
+            "software",
+            "website",
+            "legacy_code"
+          ]
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "issuerOrAuthors": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issuing body or authors, e.g. \"IMO MEPC\""
+        },
+        "year": {
+          "default": null,
+          "description": "Year of publication or adoption",
+          "anyOf": [
+            { "type": "integer", "minimum": 1000, "maximum": 9999 },
+            { "type": "null" }
+          ]
+        },
+        "identifier": {
+          "default": null,
+          "description": "DOI, ISBN, resolution or standard number, e.g. \"MEPC.353(78)\"",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "url": {
+          "default": null,
+          "description": "Where the source can be consulted",
+          "anyOf": [
+            { "type": "string", "pattern": "^https?:\\/\\/" },
+            { "type": "null" }
+          ]
+        },
+        "license": {
+          "default": null,
+          "description": "License or terms of use, e.g. \"CC BY 4.0\"",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "accessed": {
+          "default": null,
+          "description": "When the URL was last accessed (YYYY-MM-DD)",
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "verification": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "How far the reference was checked against the source, e.g. verified",
+          "examples": ["verified", "partially_verified", "unverified"]
+        },
+        "notes": {
+          "default": null,
+          "description": "Remarks, e.g. which section is used",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        }
+      },
+      "required": ["id", "type", "title", "issuerOrAuthors", "verification"],
+      "title": "Reference",
+      "description": "A source (regulation, standard, paper, …) cited by the methods of the methodology catalog."
+    }
+  }
+}

@@ -77,6 +77,23 @@ export function ciiGradeBoundaries(required: number, d: DdVector): DdVector {
   };
 }
 
+/** Members of a vessel snapshot that determine its CII capacity. */
+export interface CiiCapacityInput {
+  readonly type: { readonly capacityFixed?: number | null | undefined };
+  readonly dimensions: { readonly capacity: number };
+}
+
+/**
+ * Capacity used by the CII (spec 13.5): the regulation-fixed capacity of the
+ * ship type when it has one (e.g. 279 000 for bulk carriers of 279 000 DWT and
+ * above, MEPC.353(78)), else the capacity of the vessel.
+ *
+ * @example ciiCapacity(vesselSnapshot) // type.capacityFixed ?? dimensions.capacity
+ */
+export function ciiCapacity(vessel: CiiCapacityInput): number {
+  return vessel.type.capacityFixed ?? vessel.dimensions.capacity;
+}
+
 /** Label of a CII grade in the given locale. */
 export function ciiGradeLabel(grade: CiiGrade, locale: Locale = 'en'): string {
   return CII_GRADE_LABELS[grade][locale];

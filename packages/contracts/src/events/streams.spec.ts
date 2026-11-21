@@ -40,6 +40,8 @@ describe('STREAMS', () => {
       ['AIS_POSITION', ['ais.position.v1.>'], 'limits', 7 * DAY, -1],
       ['FUEL', ['fuel.reading.v1.>'], 'limits', 30 * DAY, -1],
       ['FLEET', ['fleet.vessel.v1.>'], 'limits', 0, 1],
+      ['GEO', ['geo.zone.v1.>'], 'limits', 0, 1],
+      ['SAFETY', ['safety.state.v1.>'], 'limits', 7 * DAY, 1],
       ['EMISSION', ['emission.cii.v1.>'], 'limits', 30 * DAY, -1],
       ['ALERTS', ['alert.v1.>'], 'limits', 90 * DAY, -1],
       ['NOTIFY', ['notify.email.v1'], 'workqueue', 7 * DAY, -1],
@@ -88,13 +90,17 @@ describe('CONSUMERS', () => {
     ).toEqual([
       ['ais-processor', 'AIS_RAW'],
       ['emission-positions', 'AIS_POSITION'],
-      ['detection-positions', 'AIS_POSITION'],
+      ['safety-positions', 'AIS_POSITION'],
+      ['surveillance-positions', 'AIS_POSITION'],
       ['emission-fuel', 'FUEL'],
       ['emission-fleet', 'FLEET'],
-      ['detection-fleet', 'FLEET'],
+      ['safety-fleet', 'FLEET'],
+      ['surveillance-fleet', 'FLEET'],
       ['notification-fleet', 'FLEET'],
       ['telemetry-fleet', 'FLEET'],
       ['ais-processor-fleet', 'FLEET'],
+      ['safety-zones', 'GEO'],
+      ['surveillance-zones', 'GEO'],
       ['notification-alerts', 'ALERTS'],
       ['notification-email', 'NOTIFY'],
       ['auth-audit', 'AUDIT'],
@@ -122,16 +128,58 @@ describe('CONSUMERS', () => {
   });
 
   it('declares ordered consumers and core subscriptions of notification and telemetry', () => {
-    expect(ORDERED_CONSUMERS.map((c) => [c.stream, c.service])).toEqual([
-      ['AIS_POSITION', 'notification'],
-      ['EMISSION', 'notification'],
-    ]);
+    expect(ORDERED_CONSUMERS.map((c) => [c.name, c.stream, c.service])).toEqual(
+      [
+        ['notification-positions', 'AIS_POSITION', 'notification'],
+        ['notification-safety', 'SAFETY', 'notification'],
+        ['notification-cii', 'EMISSION', 'notification'],
+      ],
+    );
+    for (const consumer of ORDERED_CONSUMERS) {
+      for (const type of consumer.eventTypes) {
+        expect(EVENT_CATALOG[type].stream).toBe(consumer.stream);
+      }
+      for (const filter of consumer.filterSubjects) {
+        expect(STREAMS[consumer.stream].subjects).toContain(filter);
+      }
+    }
     expect(CORE_SUBSCRIPTIONS).toEqual([
       expect.objectContaining({
-        subject: 'seemp.telemetry.*',
+        subject: 'aisits.telemetry.*',
         service: 'telemetry',
       }),
     ]);
+  });
+
+  it('feeds safety and surveillance with positions, zones and vessels only', () => {
+    for (const service of ['safety', 'surveillance'] as const) {
+      expect(
+        consumersOfService(service).map((c) => [c.durableName, c.stream]),
+      ).toEqual([
+        [`${service}-positions`, 'AIS_POSITION'],
+        [`${service}-fleet`, 'FLEET'],
+        [`${service}-zones`, 'GEO'],
+      ]);
+    }
+    expect(
+      consumersOfEvent('geo.zone.deleted.v1').map((c) =>
+        'durableName' in c ? c.durableName : c.name,
+      ),
+    ).toEqual(['safety-zones', 'surveillance-zones']);
+    expect(
+      consumersOfEvent('safety.vessel_state.updated.v1').map((c) =>
+        'durableName' in c ? c.durableName : c.name,
+      ),
+    ).toEqual(['notification-safety']);
+  });
+
+  it('declares no consumer of the removed detection service', () => {
+    const names = [
+      ...CONSUMER_LIST.map((c) => c.durableName),
+      ...ORDERED_CONSUMERS.map((c) => c.name),
+    ];
+    expect(names.filter((name) => name.startsWith('detection'))).toEqual([]);
+    expect(SERVICE_NAMES).not.toContain('detection');
   });
 
   it('finds consumers by service and by event type', () => {
@@ -146,7 +194,8 @@ describe('CONSUMERS', () => {
       ),
     ).toEqual([
       'emission-positions',
-      'detection-positions',
+      'safety-positions',
+      'surveillance-positions',
       'notification-positions',
     ]);
   });

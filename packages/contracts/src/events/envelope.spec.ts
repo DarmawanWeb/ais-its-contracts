@@ -112,7 +112,7 @@ describe('makeEnvelope', () => {
       expect(() =>
         makeEnvelope({
           type: 'alert.raised.v1',
-          source: 'detection',
+          source: 'safety',
           data: EVENT_EXAMPLES['alert.raised.v1'],
           ...metadata,
         }),
@@ -121,7 +121,7 @@ describe('makeEnvelope', () => {
     expect(() =>
       makeEnvelope({
         type: 'alert.raised.v1',
-        source: 'detection',
+        source: 'safety',
         data: EVENT_EXAMPLES['alert.raised.v1'],
         time: new Date('invalid'),
       }),
@@ -150,7 +150,10 @@ describe('envelope round trip', () => {
     expect(result.success).toBe(true);
     if (result.success && result.envelope.type === EVENT_TYPES.ALERT_RAISED) {
       expectTypeOf(result.envelope.data.dedupKey).toEqualTypeOf<string>();
-      expect(result.envelope.data.dedupKey).toBe('ews:525005223');
+      expect(result.envelope.data.dedupKey).toBe(
+        'ews:525005223:01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e',
+      );
+      expect(result.envelope.data.domain).toBe('safety');
     }
   });
 
@@ -302,6 +305,9 @@ describe('envelope schemas and types', () => {
       ['fuel.reading.recorded.v1', '525005223'],
       ['fleet.vessel.upserted.v1', '01a1f8c2-54d9-7223-9107-543e8d90de1c'],
       ['fleet.vessel.deleted.v1', '01a1f8c2-54d9-7223-9107-543e8d90de1c'],
+      ['geo.zone.upserted.v1', '01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e'],
+      ['geo.zone.deleted.v1', '01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e'],
+      ['safety.vessel_state.updated.v1', '525005223'],
       ['emission.cii.updated.v1', '525005223'],
       ['alert.raised.v1', '525005223'],
       ['notify.email.requested.v1', 'operator@example.com'],

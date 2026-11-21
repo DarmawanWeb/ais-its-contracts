@@ -1,7 +1,14 @@
 import { defineConfig } from 'tsup';
 
 /** Public entry points; keep in sync with `exports` in package.json. */
-const ENTRIES = ['events', 'auth', 'domain', 'realtime', 'api'] as const;
+const ENTRIES = [
+  'events',
+  'auth',
+  'domain',
+  'realtime',
+  'api',
+  'references',
+] as const;
 
 export default defineConfig({
   entry: {

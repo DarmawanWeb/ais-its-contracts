@@ -2,9 +2,9 @@ Private License
 
 Copyright (c) 2026 DarmawanWeb. All rights reserved.
 
-This repository and the packages built from it (@darmawanweb/seemp-contracts,
-@darmawanweb/seemp-platform) are part of the AIS-ITS-CII-SEEMP project and are
-proprietary and confidential.
+This repository and the packages built from it (@darmawanweb/ais-its-contracts,
+@darmawanweb/ais-its-nest) are part of the AIS Maritime Intelligence project
+(formerly AIS-ITS-CII-SEEMP) and are proprietary and confidential.
 
 Use, copying, modification and distribution are restricted to users who have
 been explicitly authorized by the copyright holder. No license or other right

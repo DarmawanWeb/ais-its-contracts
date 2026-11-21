@@ -16,3 +16,11 @@ export type LocalizedText = Readonly<Record<Locale, string>>;
 export function isLocale(value: unknown): value is Locale {
   return LOCALES.some((locale) => locale === value);
 }
+
+/** Zod schema of a {@link LocalizedText}: a non-empty text per supported locale. */
+export const LocalizedTextSchema = z
+  .object({
+    id: z.string().min(1).describe('Bahasa Indonesia'),
+    en: z.string().min(1).describe('English'),
+  })
+  .describe('Text in Bahasa Indonesia and English');

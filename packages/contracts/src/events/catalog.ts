@@ -1,5 +1,5 @@
 import { AIS_SOURCES } from '../domain/ais.js';
-import { ALERT_TYPES } from '../domain/alerts.js';
+import { KNOWN_ALERT_TYPES } from '../domain/alerts.js';
 import { SERVICE_NAMES, type ServiceName } from './services.js';
 import type { StreamName } from './streams.js';
 import { EVENT_TYPES, type EventType } from './types.js';
@@ -7,8 +7,10 @@ import { EVENT_TYPES, type EventType } from './types.js';
 /** A `{parameter}` of a subject pattern. */
 export interface SubjectParameter {
   readonly description: string;
-  /** Allowed values, when the parameter is an enumeration. */
+  /** Allowed values, when the parameter is a closed enumeration. */
   readonly enum?: readonly string[];
+  /** Known values of an open set (future values are allowed). */
+  readonly examples?: readonly string[];
 }
 
 /** Documentation of one event type (drives the README and AsyncAPI). */
@@ -56,7 +58,7 @@ export const EVENT_CATALOG = {
     },
     producers: ['ais-processor'],
     description:
-      'A recorded vessel position enriched with predicted navstatus, EWS status and distances.',
+      'A recorded vessel position enriched with the predicted navstatus and the coast distance (AIS data only, no safety fields).',
   },
   [EVENT_TYPES.FUEL_READING_RECORDED]: {
     type: EVENT_TYPES.FUEL_READING_RECORDED,
@@ -85,6 +87,34 @@ export const EVENT_CATALOG = {
     producers: ['fleet'],
     description: 'A vessel was deleted (tombstone of the snapshot).',
   },
+  [EVENT_TYPES.GEO_ZONE_UPSERTED]: {
+    type: EVENT_TYPES.GEO_ZONE_UPSERTED,
+    payloadName: 'ZoneSnapshotV1',
+    stream: 'GEO',
+    subject: 'geo.zone.v1.{zoneId}',
+    parameters: { zoneId: { description: 'Zone id (UUID).' } },
+    producers: ['geo'],
+    description: 'The full current snapshot of a created or changed zone.',
+  },
+  [EVENT_TYPES.GEO_ZONE_DELETED]: {
+    type: EVENT_TYPES.GEO_ZONE_DELETED,
+    payloadName: 'ZoneDeletedV1',
+    stream: 'GEO',
+    subject: 'geo.zone.v1.{zoneId}',
+    parameters: { zoneId: { description: 'Zone id (UUID).' } },
+    producers: ['geo'],
+    description: 'A zone was deleted (tombstone of the snapshot).',
+  },
+  [EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED]: {
+    type: EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED,
+    payloadName: 'SafetyVesselStateV1',
+    stream: 'SAFETY',
+    subject: 'safety.state.v1.{mmsi}',
+    parameters: { mmsi: MMSI_PARAMETER },
+    producers: ['safety'],
+    description:
+      'The navigational safety state of a vessel (EWS status, collision risk), on change and as a heartbeat.',
+  },
   [EVENT_TYPES.EMISSION_CII_UPDATED]: {
     type: EVENT_TYPES.EMISSION_CII_UPDATED,
     payloadName: 'CiiUpdatedV1',
@@ -100,12 +130,16 @@ export const EVENT_CATALOG = {
     stream: 'ALERTS',
     subject: 'alert.v1.{alertType}.{mmsi}',
     parameters: {
-      alertType: { description: 'Alert type.', enum: ALERT_TYPES },
+      alertType: {
+        description:
+          'Alert type of the registry ALERT_TYPES or a future type (consumers accept unknown types).',
+        examples: KNOWN_ALERT_TYPES,
+      },
       mmsi: MMSI_PARAMETER,
     },
-    producers: ['ais-processor', 'detection'],
+    producers: ['safety', 'surveillance'],
     description:
-      'An alert raised by EWS (ais-processor) or a detector (detection).',
+      'An alert raised by a safety (ews, collision) or surveillance (transhipment, anomaly, dark, geofence, fishing) detector.',
   },
   [EVENT_TYPES.NOTIFY_EMAIL_REQUESTED]: {
     type: EVENT_TYPES.NOTIFY_EMAIL_REQUESTED,

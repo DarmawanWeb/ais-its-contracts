@@ -29,8 +29,8 @@ const ORG_A = '01a1f8c2-54d8-71c4-95cf-ab5eb8908e00';
 const ORG_B = '01a1f8c2-54d9-7223-9107-543e8d90de1c';
 
 const CLAIMS: AccessTokenClaimsInput = {
-  iss: 'seemp-auth',
-  aud: 'seemp-api',
+  iss: 'ais-its-auth',
+  aud: 'ais-its-api',
   sub: '01a1f8c2-54db-7a10-8b21-1d2e3f4a5b6c',
   sid: '01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5b',
   org: ORG_A,
@@ -49,9 +49,9 @@ describe('AccessTokenClaimsSchema', () => {
       AccessTokenClaimsSchema.parse({
         ...CLAIMS,
         org: null,
-        aud: ['seemp-api', 'other'],
+        aud: ['ais-its-api', 'other'],
       }),
-    ).toMatchObject({ org: null, aud: ['seemp-api', 'other'] });
+    ).toMatchObject({ org: null, aud: ['ais-its-api', 'other'] });
   });
 
   it('drops unknown roles instead of rejecting the token', () => {
@@ -79,14 +79,16 @@ describe('AccessTokenClaimsSchema', () => {
   });
 
   it('exposes the default issuer, audience and cookie', () => {
-    expect(DEFAULT_AUTH_ISSUER).toBe('seemp-auth');
-    expect(DEFAULT_AUTH_AUDIENCE).toBe('seemp-api');
-    expect(REFRESH_TOKEN_COOKIE).toBe('seemp_rt');
+    expect(DEFAULT_AUTH_ISSUER).toBe('ais-its-auth');
+    expect(DEFAULT_AUTH_AUDIENCE).toBe('ais-its-api');
+    expect(REFRESH_TOKEN_COOKIE).toBe('aisits_rt');
     expect(REFRESH_TOKEN_COOKIE_PATH).toBe('/api/v2/auth');
     expect(HTTP_HEADERS).toMatchObject({
       API_KEY: 'X-API-Key',
       INTERNAL_TOKEN: 'X-Internal-Token',
       REQUEST_ID: 'X-Request-Id',
+      WEBHOOK_SIGNATURE: 'X-AIS-ITS-Signature',
+      WEBHOOK_TIMESTAMP: 'X-AIS-ITS-Timestamp',
     });
   });
 });

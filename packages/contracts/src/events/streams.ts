@@ -6,6 +6,8 @@ export const STREAM_NAMES = [
   'AIS_POSITION',
   'FUEL',
   'FLEET',
+  'GEO',
+  'SAFETY',
   'EMISSION',
   'ALERTS',
   'NOTIFY',
@@ -86,6 +88,24 @@ export const STREAMS = {
     description:
       'Latest vessel snapshot per vessel (projection source for every service).',
   },
+  GEO: {
+    ...defaults,
+    name: 'GEO',
+    subjects: ['geo.zone.v1.>'],
+    maxAgeMs: 0,
+    maxMsgsPerSubject: 1,
+    description:
+      'Latest zone snapshot per zone published by geo (projection source for safety and surveillance).',
+  },
+  SAFETY: {
+    ...defaults,
+    name: 'SAFETY',
+    subjects: ['safety.state.v1.>'],
+    maxAgeMs: 7 * DAY_MS,
+    maxMsgsPerSubject: 1,
+    description:
+      'Latest navigational safety state per vessel published by safety.',
+  },
   EMISSION: {
     ...defaults,
     name: 'EMISSION',
@@ -98,7 +118,8 @@ export const STREAMS = {
     name: 'ALERTS',
     subjects: ['alert.v1.>'],
     maxAgeMs: 90 * DAY_MS,
-    description: 'Alerts raised by ais-processor (ews) and detection.',
+    description:
+      'Alerts raised by the safety and surveillance detectors (alert.v1.<alertType>.<mmsi>).',
   },
   NOTIFY: {
     ...defaults,

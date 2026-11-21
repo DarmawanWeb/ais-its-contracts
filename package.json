@@ -1,8 +1,8 @@
 {
-  "name": "seemp-contracts-workspace",
-  "version": "0.1.0",
+  "name": "ais-its-contracts-workspace",
+  "version": "0.2.0",
   "private": true,
-  "description": "Shared libraries of the SEEMP platform v2: @darmawanweb/seemp-contracts and @darmawanweb/seemp-platform.",
+  "description": "Shared libraries of AIS Maritime Intelligence v2: @darmawanweb/ais-its-contracts (isomorphic contracts) and @darmawanweb/ais-its-nest (NestJS service kit with the Detector SDK).",
   "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
@@ -19,6 +19,8 @@
     "clean": "pnpm -r clean",
     "schemas": "pnpm -r --if-present schemas",
     "schemas:check": "pnpm -r --if-present schemas:check",
+    "references:sync": "pnpm --filter @darmawanweb/ais-its-contracts run references:sync",
+    "references:check": "pnpm --filter @darmawanweb/ais-its-contracts run references:check",
     "check:package": "pnpm -r --if-present check:package",
     "prepare": "husky"
   },

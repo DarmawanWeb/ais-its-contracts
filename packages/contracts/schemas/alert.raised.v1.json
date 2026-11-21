@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://seemp.dev/schemas/events/alert.raised.v1.json",
+  "$id": "urn:ais-its:schema:events:alert.raised.v1",
   "title": "AlertRaisedV1",
-  "description": "Payload (\"data\") of alert.raised.v1. An alert raised by ais-processor (ews) or detection.",
+  "description": "Payload (\"data\") of alert.raised.v1. An alert raised by a safety or surveillance detector (alert type registry ALERT_TYPES).",
   "type": "object",
   "properties": {
     "id": {
@@ -13,8 +13,22 @@
     },
     "type": {
       "type": "string",
-      "enum": ["ews", "transhipment", "anomaly", "dark", "geofence", "fishing"],
-      "description": "Alert type"
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Alert type: a registry type (ALERT_TYPES) or a future type; consumers accept unknown types",
+      "examples": [
+        "ews",
+        "collision",
+        "transhipment",
+        "anomaly",
+        "dark",
+        "geofence",
+        "fishing"
+      ]
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["safety", "surveillance"],
+      "description": "Analytics domain: safety or surveillance"
     },
     "severity": {
       "type": "string",
@@ -37,7 +51,7 @@
         },
         { "type": "null" }
       ],
-      "description": "Second vessel involved (e.g. transhipment)"
+      "description": "Second vessel involved (e.g. collision, transhipment)"
     },
     "title": { "type": "string", "minLength": 1 },
     "message": { "type": "string" },
@@ -72,7 +86,7 @@
     "dedupKey": {
       "type": "string",
       "minLength": 1,
-      "description": "Open alerts with the same key are merged, e.g. \"ews:<mmsi>\""
+      "description": "Open alerts with the same key are merged, e.g. \"ews:<mmsi>:<zoneId>\""
     },
     "zoneId": {
       "anyOf": [
@@ -85,6 +99,11 @@
         { "type": "null" }
       ]
     },
+    "methodId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "description": "Methodology catalog id of the rule that raised the alert (spec 17)"
+    },
     "data": {
       "type": "object",
       "propertyNames": { "type": "string" },
@@ -95,6 +114,7 @@
   "required": [
     "id",
     "type",
+    "domain",
     "severity",
     "mmsi",
     "relatedMmsi",
@@ -105,6 +125,7 @@
     "occurredAt",
     "dedupKey",
     "zoneId",
+    "methodId",
     "data"
   ]
 }

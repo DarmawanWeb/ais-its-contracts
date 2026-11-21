@@ -1,7 +1,7 @@
 import * as z from 'zod';
 
-import { NAV_STATUS } from './ais.js';
-import type { AlertSeverity } from './alerts.js';
+import { PREDICTED_NAV_STATUS } from './ais.js';
+import { ALERT_TYPES, type AlertSeverity } from './alerts.js';
 import type { Locale, LocalizedText } from './locale.js';
 
 /**
@@ -38,35 +38,52 @@ export const EWS_DANGER_DISTANCE_M = 500;
 /** Distance to the pipeline below which an anchored vessel gets a warning. */
 export const EWS_WARNING_DISTANCE_M = 1750;
 
+/** Distance thresholds of the EWS classification, in meters. */
+export interface EwsThresholds {
+  /** Below this distance an anchored vessel is in danger (`EWS_DANGER_M`). */
+  readonly dangerM: number;
+  /** Below this distance an anchored vessel gets a warning (`EWS_WARNING_M`). */
+  readonly warningM: number;
+}
+
+/** Legacy thresholds: danger below 500 m, warning below 1 750 m. */
+export const EWS_DEFAULT_THRESHOLDS: EwsThresholds = {
+  dangerM: EWS_DANGER_DISTANCE_M,
+  warningM: EWS_WARNING_DISTANCE_M,
+};
+
 /**
- * Classifies a position against the pipeline exactly like the legacy
- * `checkShipStatus`: only vessels reporting navstatus `1` (at anchor) can be in
- * danger (`< 500 m`) or warned (`< 1750 m`); everything else is safe.
+ * Classifies a position against the nearest pipeline exactly like the legacy
+ * `checkShipStatus` (spec 13.7): only vessels predicted at anchor
+ * (`predictedNavstatus = 1`, the value the legacy passes) can be in danger
+ * (`< 500 m`) or warned (`< 1 750 m`); everything else is safe.
  *
- * @param pipelineDistanceM distance to the nearest pipeline point in meters.
- * @param navstatus the reported AIS navigational status.
+ * @param pipelineDistanceM distance to the nearest pipeline line in meters.
+ * @param predictedNavstatus predicted navigational status (legacy `calculatePredictedNavStatus`).
+ * @param thresholds distance thresholds; the legacy values by default.
  */
 export function classifyEwsStatus(
   pipelineDistanceM: number,
-  navstatus: number,
+  predictedNavstatus: number,
+  thresholds: EwsThresholds = EWS_DEFAULT_THRESHOLDS,
 ): EwsStatus {
-  if (navstatus === NAV_STATUS.AT_ANCHOR) {
-    if (pipelineDistanceM < EWS_DANGER_DISTANCE_M) return EWS_STATUS.DANGER;
-    if (pipelineDistanceM < EWS_WARNING_DISTANCE_M) return EWS_STATUS.WARNING;
+  if (predictedNavstatus === PREDICTED_NAV_STATUS.AT_ANCHOR) {
+    if (pipelineDistanceM < thresholds.dangerM) return EWS_STATUS.DANGER;
+    if (pipelineDistanceM < thresholds.warningM) return EWS_STATUS.WARNING;
   }
   return EWS_STATUS.SAFE;
 }
 
 /**
- * Severity of the `ews` alert raised for a status (`0` → `critical`,
- * `1` → `warning`); `null` when the status raises no alert.
+ * Severity of the `ews` alert raised for a status (registry levels: `0` →
+ * `critical`, `1` → `warning`); `null` when the status raises no alert.
  */
 export function ewsAlertSeverity(status: EwsStatus): AlertSeverity | null {
   switch (status) {
     case EWS_STATUS.DANGER:
-      return 'critical';
+      return ALERT_TYPES.ews.severityByLevel.danger;
     case EWS_STATUS.WARNING:
-      return 'warning';
+      return ALERT_TYPES.ews.severityByLevel.warning;
     case EWS_STATUS.SAFE:
       return null;
   }

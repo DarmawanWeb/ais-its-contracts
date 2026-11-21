@@ -95,6 +95,16 @@ export default defineConfig(
     },
   },
   {
+    // NestJS modules are decorated (often empty) classes by design.
+    files: ['packages/nest/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-extraneous-class': [
+        'error',
+        { allowWithDecorator: true },
+      ],
+    },
+  },
+  {
     files: ['**/scripts/**/*.{ts,mjs,js}', '**/*.config.ts'],
     languageOptions: { globals: globals.node },
     rules: { 'no-console': 'off' },
