@@ -128,6 +128,21 @@ export interface AlertPersistence {
   loadOpen?(): Promise<readonly OpenAlert[]>;
 }
 
+/** Options of {@link AlertEmitter.resolve}. */
+export interface AlertResolveOptions {
+  /** When the condition ended. Default: the emitter's clock. */
+  readonly at?: Date | undefined;
+  /** Why it ended, e.g. `"left the danger zone"`. */
+  readonly reason?: string | undefined;
+  readonly data?: Readonly<Record<string, unknown>> | undefined;
+  /**
+   * Resolves only an occurrence this predicate accepts (checked in turn with
+   * the key's other operations, so a raise still persisting is seen);
+   * `DetectorContext.alerts` uses it to scope resolutions to the detector.
+   */
+  readonly accept?: ((alert: OpenAlert) => boolean) | undefined;
+}
+
 /** Publishes an alert (`alert.raised.v1` on `alert.v1.<type>.<mmsi>`). */
 export type AlertPublisher = (alert: AlertRaisedV1) => Promise<void>;
 
@@ -265,29 +280,35 @@ export class AlertEmitter {
   }
 
   /**
-   * Ends the open occurrence of `dedupKey`.
+   * Ends the open occurrence of `dedupKey`. Runs after any raise of the key
+   * that is still persisting, so a resolution is never lost; the occurrence
+   * stays open when the persistence hook fails (the error propagates).
    *
    * @returns `false` when no occurrence was open.
    */
-  async resolve(
+  resolve(
     dedupKey: string,
-    options: {
-      readonly at?: Date;
-      readonly reason?: string;
-      readonly data?: Readonly<Record<string, unknown>>;
-    } = {},
+    options: AlertResolveOptions = {},
+  ): Promise<boolean> {
+    return this.keys.run(dedupKey, () => this.resolveNow(dedupKey, options));
+  }
+
+  private async resolveNow(
+    dedupKey: string,
+    options: AlertResolveOptions,
   ): Promise<boolean> {
     const alert = this.open.get(dedupKey);
     if (alert === undefined) return false;
+    if (options.accept !== undefined && !options.accept(alert)) return false;
     const resolvedAt = options.at ?? this.clock();
-    this.open.delete(dedupKey);
-    this.closed.set(dedupKey, { alert, closedAt: resolvedAt });
     await this.options.persistence?.onResolved?.({
       alert,
       resolvedAt,
       reason: options.reason,
       data: options.data ?? {},
     });
+    this.open.delete(dedupKey);
+    this.closed.set(dedupKey, { alert, closedAt: resolvedAt });
     return true;
   }
 

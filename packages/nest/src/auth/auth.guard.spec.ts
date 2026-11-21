@@ -95,7 +95,11 @@ interface FakeRequest {
   readonly headers: Record<string, string>;
 }
 
-type Controller = typeof Routes | typeof OpenController | typeof IngestController | typeof Gateway;
+type Controller =
+  | typeof Routes
+  | typeof OpenController
+  | typeof IngestController
+  | typeof Gateway;
 
 function contextFor(
   handler: string,
@@ -157,19 +161,35 @@ describe('AuthGuard (global default-deny, spec §8.6)', () => {
     expect(await status('page', {}, OpenController)).toBe(200);
     expect(await status('rotate', {}, OpenController)).toBe(401);
     expect(
-      await status('rotate', { authorization: `Bearer ${viewer}` }, OpenController),
+      await status(
+        'rotate',
+        { authorization: `Bearer ${viewer}` },
+        OpenController,
+      ),
     ).toBe(403);
     expect(
-      await status('rotate', { authorization: `Bearer ${admin}` }, OpenController),
+      await status(
+        'rotate',
+        { authorization: `Bearer ${admin}` },
+        OpenController,
+      ),
     ).toBe(200);
   });
 
   it('does not extend a controller-level @AllowApiKey to handlers with their own permissions', async () => {
     const admin = await jwt.sign({ roles: ['super_admin'] });
-    expect(await status('ingest', { 'x-api-key': ingestKey }, IngestController)).toBe(200);
-    expect(await status('status', { 'x-api-key': ingestKey }, IngestController)).toBe(401);
     expect(
-      await status('status', { authorization: `Bearer ${admin}` }, IngestController),
+      await status('ingest', { 'x-api-key': ingestKey }, IngestController),
+    ).toBe(200);
+    expect(
+      await status('status', { 'x-api-key': ingestKey }, IngestController),
+    ).toBe(401);
+    expect(
+      await status(
+        'status',
+        { authorization: `Bearer ${admin}` },
+        IngestController,
+      ),
     ).toBe(200);
   });
 

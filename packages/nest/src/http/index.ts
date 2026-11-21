@@ -1,7 +1,9 @@
 /**
  * HTTP building blocks of the platform (used by `bootstrapService()` and the
  * test helpers): problem details filter, validation pipe, global prefix,
- * OpenAPI, the Fastify adapter and app configuration.
+ * OpenAPI, the Fastify adapter, app configuration, and the list and query
+ * conventions of spec §5 (page / cursor / time range / bbox DTOs, response
+ * builders and their OpenAPI decorators).
  *
  * @packageDocumentation
  */
@@ -23,10 +25,29 @@ export {
   type OpenApiOptions,
   type OpenApiTag,
   PROBLEM_DETAILS_SCHEMA_NAME,
+  serializeOpenApiDocument,
   setupSwagger,
   writeOpenApiDocument,
 } from './openapi.js';
 export { SECURITY_SCHEMES } from './openapi-security.js';
+export {
+  ApiCursorResponse,
+  ApiPageResponse,
+  BBoxQueryDto,
+  bboxOf,
+  CursorPageInfoDto,
+  cursorPage,
+  CursorQueryDto,
+  decodeQueryCursor,
+  IsBBox,
+  MAX_CURSOR_LENGTH,
+  PageMetaDto,
+  pageOffsetOf,
+  PageQueryDto,
+  paginate,
+  resolveQueryTimeRange,
+  TimeRangeQueryDto,
+} from './pagination.js';
 export {
   ProblemDetailsFilter,
   WS_EXCEPTION_EVENT,

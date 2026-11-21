@@ -8,7 +8,11 @@ export {
   createPlatformApp,
   type PlatformApp,
 } from './create-app.js';
-export { exportOpenApi, type ExportOpenApiOptions } from './export-openapi.js';
+export {
+  exportOpenApi,
+  type ExportOpenApiOptions,
+  OpenApiDriftError,
+} from './export-openapi.js';
 export {
   type ImportableModule,
   type PlatformRootOptions,

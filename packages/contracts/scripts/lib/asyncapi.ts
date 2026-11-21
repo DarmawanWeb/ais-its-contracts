@@ -11,7 +11,7 @@ import {
   type EventType,
   makeEnvelope,
   NATS_HEADERS,
-  ORDERED_CONSUMERS,
+  ORDERED_CONSUMER_LIST,
   type StreamName,
   STREAMS,
 } from '../../src/events/index.js';
@@ -193,7 +193,7 @@ function operations(): JsonObject {
       },
     ]);
   }
-  for (const consumer of ORDERED_CONSUMERS) {
+  for (const consumer of ORDERED_CONSUMER_LIST) {
     const channel = CHANNEL_IDS[consumer.stream];
     entries.push([
       `receive-${consumer.name}`,

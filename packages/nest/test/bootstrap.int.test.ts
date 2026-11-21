@@ -1,11 +1,19 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { Controller, Get, Module } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Injectable,
+  Module,
+  type OnApplicationShutdown,
+  type OnModuleInit,
+} from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import * as z from 'zod';
 
 import { DetectorRunnerModule } from '../src/analytics/index.js';
 import { AuthModule, Public, RequirePermissions } from '../src/auth/index.js';
@@ -13,8 +21,11 @@ import { DatabaseModule } from '../src/db/index.js';
 import {
   baseConfigSchema,
   bootstrapService,
+  ConfigValidationError,
+  defineConfig,
   exportOpenApi,
   loadConfig,
+  OpenApiDriftError,
 } from '../src/index.js';
 import { NatsModule } from '../src/nats/index.js';
 import { RedisModule } from '../src/redis/index.js';
@@ -169,5 +180,51 @@ describe('exportOpenApi', () => {
       openapi: string;
     };
     expect(written.openapi).toMatch(/^3\./);
+  });
+
+  it('derives the config from the schema (placeholders for runtime-only variables), runs no lifecycle hook and checks drift', async () => {
+    const hooks: string[] = [];
+    @Injectable()
+    class Hooked implements OnModuleInit, OnApplicationShutdown {
+      onModuleInit(): void {
+        hooks.push('onModuleInit');
+      }
+      onApplicationShutdown(): void {
+        hooks.push('onApplicationShutdown');
+      }
+    }
+    @Module({ controllers: [PingController], providers: [Hooked] })
+    class AppModule {}
+    const fleetLike = defineConfig({
+      SERVICE_NAME: z.string().default('fleet'),
+      S3_ENDPOINT: z.url(),
+      S3_BUCKET_PHOTOS: z.string().min(3),
+      KEY_ENCRYPTION_SECRET: z.string().min(32),
+      PHOTO_MAX_BYTES: z.coerce.number().int().positive(),
+    });
+    const outFile = join(dir, 'derived.json');
+    const options = {
+      appModule: AppModule,
+      configSchema: fleetLike,
+      env: { PATH: '/usr/bin' },
+      openapi: { title: 'Fleet', version: '0.1.0' },
+      outFile,
+    };
+    await exportOpenApi(options);
+    expect(hooks).toEqual([]);
+    await expect(
+      exportOpenApi({ ...options, check: true }),
+    ).resolves.toMatchObject({
+      info: { title: 'Fleet' },
+    });
+    await writeFile(outFile, '{}\n');
+    await expect(
+      exportOpenApi({ ...options, check: true }),
+    ).rejects.toBeInstanceOf(OpenApiDriftError);
+    // Present values are still validated.
+    await expect(
+      exportOpenApi({ ...options, env: { S3_ENDPOINT: 'not a url' } }),
+    ).rejects.toBeInstanceOf(ConfigValidationError);
+    expect(hooks).toEqual([]);
   });
 });

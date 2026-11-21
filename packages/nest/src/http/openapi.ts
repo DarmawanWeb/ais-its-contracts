@@ -161,5 +161,10 @@ export async function writeOpenApiDocument(
   outFile: string,
 ): Promise<void> {
   await mkdir(dirname(outFile), { recursive: true });
-  await writeFile(outFile, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+  await writeFile(outFile, serializeOpenApiDocument(document), 'utf8');
+}
+
+/** The committed form of a document: 2-space JSON with a final newline. */
+export function serializeOpenApiDocument(document: OpenAPIObject): string {
+  return `${JSON.stringify(document, null, 2)}\n`;
 }

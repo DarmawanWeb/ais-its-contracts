@@ -5,7 +5,12 @@ import type {
 import { DiscoveryService } from '@nestjs/core';
 import type * as z from 'zod';
 
-import type { AlertOutcome, AlertSignal, OpenAlert } from './alert-emitter.js';
+import type {
+  AlertOutcome,
+  AlertResolveOptions,
+  AlertSignal,
+  OpenAlert,
+} from './alert-emitter.js';
 import type { FleetDirectory, VesselChange } from './fleet-directory.js';
 import type { PairSearch } from './pair-search.js';
 import type { VesselPosition } from './vessel-position.js';
@@ -39,11 +44,7 @@ export interface DetectorAlerts {
   /** Ends the open occurrence of `dedupKey`; `false` when none was open. */
   resolve(
     dedupKey: string,
-    options?: {
-      readonly at?: Date;
-      readonly reason?: string;
-      readonly data?: Readonly<Record<string, unknown>>;
-    },
+    options?: Omit<AlertResolveOptions, 'accept'>,
   ): Promise<boolean>;
   /** The open occurrence of a key. */
   get(dedupKey: string): OpenAlert | undefined;

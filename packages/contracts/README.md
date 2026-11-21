@@ -132,6 +132,7 @@ import {
   countGeometryPositions,
   geometryBBox,
   ZONE_MAX_VERTICES,
+  zoneProperties,
 } from '@darmawanweb/ais-its-contracts/domain';
 import { ZoneSnapshotV1Schema } from '@darmawanweb/ais-its-contracts/events';
 import {
@@ -143,6 +144,7 @@ import {
 const zone = ZoneSnapshotV1Schema.parse(data); // GeoJSON geometry in WGS84, kind, bufferM, …
 countGeometryPositions(zone.geometry) <= ZONE_MAX_VERTICES; // 50 000 (geo service input rule)
 geometryBBox(zone.geometry); // [minLon, minLat, maxLon, maxLat]
+zoneProperties(zone).depthM; // typed per kind (ZONE_PROPERTY_SCHEMAS); invalid keys read as missing
 
 // Notification gateway: SafetyVesselStateV1 has no coordinates, so it is pushed at the
 // latest known position of the vessel (from AIS_POSITION).
@@ -183,7 +185,7 @@ import {
   newId,
 } from '@darmawanweb/ais-its-contracts/domain';
 
-haversineDistance(previous, current); // { nm, meters } with R = 3438 nm (legacy calculateDistance)
+haversineDistance(previous, current); // { nm, meters } with R = 3438 nm (legacy calculateDistance; alias legacyHaversineDistance)
 assignCiiGrade(attained / required, vesselType.d); // 'A'..'E' (legacy assignGradeBasedOnDdVector)
 ciiCapacity(vessel); // type.capacityFixed ?? dimensions.capacity (spec 13.5)
 classifyEwsStatus(distanceM, predictedNavstatus); // 0 | 1 | 3 (legacy checkShipStatus)

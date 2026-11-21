@@ -31,7 +31,8 @@ export interface ResilientRemoteJwksOptions {
   /** Fetch timeout, ms. Default 5 s. */
   readonly timeoutMs?: number | undefined;
   /** Called when a refresh fails (logging, metrics); verification goes on with cached keys. */
-  readonly onRefreshError?: ((error: KeySetUnavailableError) => void) | undefined;
+  readonly onRefreshError?:
+    ((error: KeySetUnavailableError) => void) | undefined;
   /** Clock (tests). */
   readonly now?: (() => number) | undefined;
   /** `fetch` implementation (tests). */
@@ -138,7 +139,8 @@ export function createResilientRemoteJwks(
   function refreshInBackground(): void {
     if (inflight !== undefined || coolingDown()) return;
     refresh().catch((error: unknown) => {
-      if (error instanceof KeySetUnavailableError) options.onRefreshError?.(error);
+      if (error instanceof KeySetUnavailableError)
+        options.onRefreshError?.(error);
     });
   }
 

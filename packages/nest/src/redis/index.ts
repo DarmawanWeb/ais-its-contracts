@@ -21,3 +21,8 @@ export {
   redisRetryDelay,
 } from './redis.module.js';
 export { InjectRedis, REDIS_CLIENT, REDIS_OPTIONS } from './redis.tokens.js';
+/**
+ * The client type injected by `@InjectRedis()` (re-exported so that services
+ * need no direct `ioredis` dependency under pnpm's strict layout).
+ */
+export type { Redis, RedisOptions } from 'ioredis';

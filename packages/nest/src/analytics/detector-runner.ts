@@ -174,8 +174,11 @@ export class DetectorRunner
     });
     let name = settings.definition.durableName;
     if (this.registry.isSubset) {
-      const ids = this.registry.enabled.map((entry) => entry.descriptor.id).sort();
-      const suffix = ids.length === 0 ? 'none' : ids.join('-').replaceAll('_', '-');
+      const ids = this.registry.enabled
+        .map((entry) => entry.descriptor.id)
+        .sort();
+      const suffix =
+        ids.length === 0 ? 'none' : ids.join('-').replaceAll('_', '-');
       name =
         `${name}-${suffix}`.length <= MAX_DURABLE_NAME_LENGTH
           ? `${name}-${suffix}`

@@ -1,14 +1,20 @@
 import { EVENT_TYPES } from '@darmawanweb/ais-its-contracts/events';
 import {
   type DynamicModule,
+  type InjectionToken,
   Logger,
   Module,
+  type ModuleMetadata,
+  type OptionalFactoryDependency,
   type Provider,
 } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 import type { Redis } from 'ioredis';
 
-import { provideAs } from '../common/provider-definition.js';
+import {
+  type ProviderDefinition,
+  provideAs,
+} from '../common/provider-definition.js';
 import { errorMessage, retryUntilDeadline } from '../common/retry.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type { BaseConfig } from '../config/env-schema.js';
@@ -26,6 +32,7 @@ import { DetectorRunner } from './detector-runner.js';
 import {
   ALERT_PERSISTENCE,
   DETECTOR_CLOCK,
+  DETECTOR_ENV,
   DETECTOR_RUNNER_OPTIONS,
   type DetectorRunnerOptions,
 } from './detector-runner.options.js';
@@ -58,13 +65,70 @@ type Clock = () => Date;
  *   positions: 'safety-positions',
  *   persistence: { useClass: SafetyEventsRepository },
  * })
+ * // or with options from the typed configuration:
+ * DetectorRunnerModule.forRootAsync({
+ *   inject: [APP_CONFIG],
+ *   useFactory: (config: Config) => ({ positions: 'safety-positions', concurrency: config.SAFETY_CONCURRENCY }),
+ *   persistence: { useClass: SafetyEventsRepository },
+ * })
  */
+/** Options of {@link DetectorRunnerModule.forRootAsync}. */
+export interface DetectorRunnerModuleAsyncOptions {
+  /** Builds the options, e.g. from `APP_CONFIG` (the validated configuration). */
+  readonly useFactory: (
+    ...args: never[]
+  ) => DetectorRunnerOptions | Promise<DetectorRunnerOptions>;
+  /** Providers handed to `useFactory`. */
+  readonly inject?:
+    readonly (InjectionToken | OptionalFactoryDependency)[] | undefined;
+  /** Modules of the injected providers and of the persistence provider. */
+  readonly imports?: ModuleMetadata['imports'];
+  /** The service's event repository hook (static: it is a provider). */
+  readonly persistence?: ProviderDefinition<AlertPersistence> | undefined;
+}
+
 @Module({})
 export class DetectorRunnerModule {
   /** Registers the SDK providers and the runner. */
   static forRoot(options: DetectorRunnerOptions): DynamicModule {
-    const providers: Provider[] = [
+    return DetectorRunnerModule.build(
       { provide: DETECTOR_RUNNER_OPTIONS, useValue: options },
+      options.persistence,
+      options.imports,
+    );
+  }
+
+  /**
+   * Like {@link forRoot}, with the options built by a factory (e.g. from
+   * the typed configuration, `inject: [APP_CONFIG]`).
+   */
+  static forRootAsync(
+    options: DetectorRunnerModuleAsyncOptions,
+  ): DynamicModule {
+    return DetectorRunnerModule.build(
+      {
+        provide: DETECTOR_RUNNER_OPTIONS,
+        useFactory: options.useFactory,
+        inject: [...(options.inject ?? [])],
+      },
+      options.persistence,
+      options.imports,
+    );
+  }
+
+  private static build(
+    optionsProvider: Provider,
+    persistence: ProviderDefinition<AlertPersistence> | undefined,
+    imports: ModuleMetadata['imports'],
+  ): DynamicModule {
+    const providers: Provider[] = [
+      optionsProvider,
+      {
+        provide: DETECTOR_ENV,
+        useFactory: (options: DetectorRunnerOptions) =>
+          options.env ?? process.env,
+        inject: [DETECTOR_RUNNER_OPTIONS],
+      },
       { provide: DETECTOR_CLOCK, useValue: (() => new Date()) satisfies Clock },
       {
         provide: DetectorMetrics,
@@ -74,6 +138,7 @@ export class DetectorRunnerModule {
       {
         provide: VesselStateStore,
         useFactory: (
+          options: DetectorRunnerOptions,
           clock: Clock,
           config: BaseConfig,
           redis: Redis | undefined,
@@ -104,6 +169,7 @@ export class DetectorRunnerModule {
           });
         },
         inject: [
+          DETECTOR_RUNNER_OPTIONS,
           DETECTOR_CLOCK,
           APP_CONFIG,
           { token: REDIS_CLIENT, optional: true },
@@ -111,31 +177,33 @@ export class DetectorRunnerModule {
       },
       {
         provide: PairSearch,
-        useFactory: (clock: Clock) =>
+        useFactory: (options: DetectorRunnerOptions, clock: Clock) =>
           new PairSearch<VesselState>({
             ...options.pairSearch,
             distanceModel: options.distanceModel,
             clock,
           }),
-        inject: [DETECTOR_CLOCK],
+        inject: [DETECTOR_RUNNER_OPTIONS, DETECTOR_CLOCK],
       },
       {
         provide: ZoneIndex,
-        useFactory: () =>
+        useFactory: (options: DetectorRunnerOptions) =>
           new ZoneIndex({ distanceModel: options.distanceModel }),
+        inject: [DETECTOR_RUNNER_OPTIONS],
       },
       { provide: FleetDirectory, useFactory: () => new FleetDirectory() },
       {
         provide: AlertEmitter,
         useFactory: (
+          options: DetectorRunnerOptions,
           publisher: EventPublisher,
           clock: Clock,
-          persistence: AlertPersistence | undefined,
+          alertPersistence: AlertPersistence | undefined,
         ) =>
           new AlertEmitter({
             clock,
             cooldownMs: options.alertCooldownMs,
-            persistence,
+            persistence: alertPersistence,
             publish: async (alert) => {
               // Same id for the envelope: retries are deduplicated by JetStream.
               await retryUntilDeadline(
@@ -152,6 +220,7 @@ export class DetectorRunnerModule {
             },
           }),
         inject: [
+          DETECTOR_RUNNER_OPTIONS,
           EventPublisher,
           DETECTOR_CLOCK,
           { token: ALERT_PERSISTENCE, optional: true },
@@ -160,6 +229,8 @@ export class DetectorRunnerModule {
       {
         provide: DetectorRegistry,
         useFactory: (
+          options: DetectorRunnerOptions,
+          env: Readonly<Record<string, string | undefined>>,
           vessels: VesselStateStore,
           pairs: PairSearch<VesselState>,
           zones: ZoneIndex,
@@ -178,13 +249,15 @@ export class DetectorRunnerModule {
           };
           return new DetectorRegistry({
             services,
-            env: options.env,
+            env,
             enabled: options.enabled,
             metrics,
             callTimeoutMs: options.callTimeoutMs,
           });
         },
         inject: [
+          DETECTOR_RUNNER_OPTIONS,
+          DETECTOR_ENV,
           VesselStateStore,
           PairSearch,
           ZoneIndex,
@@ -224,12 +297,12 @@ export class DetectorRunnerModule {
       },
       DetectorRunner,
     ];
-    if (options.persistence !== undefined)
-      providers.push(provideAs(ALERT_PERSISTENCE, options.persistence));
+    if (persistence !== undefined)
+      providers.push(provideAs(ALERT_PERSISTENCE, persistence));
     return {
       module: DetectorRunnerModule,
       global: true,
-      imports: [DiscoveryModule, ...(options.imports ?? [])],
+      imports: [DiscoveryModule, ...(imports ?? [])],
       providers,
       exports: [
         DetectorRegistry,
@@ -241,6 +314,7 @@ export class DetectorRunnerModule {
         AlertEmitter,
         DetectorMetrics,
         DETECTOR_CLOCK,
+        DETECTOR_ENV,
       ],
     };
   }

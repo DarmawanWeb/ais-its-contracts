@@ -7,12 +7,45 @@ All notable changes to this repository are documented in this file. The format f
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
+`@darmawanweb/ais-its-contracts` 0.3.0 and `@darmawanweb/ais-its-nest` 0.2.0 (review fixes; the
+kit's changes are listed in [`packages/nest/CHANGELOG.md`](packages/nest/CHANGELOG.md)).
+
+### Changed
+
+#### `@darmawanweb/ais-its-contracts`
+
+- **BREAKING** `ORDERED_CONSUMERS` is keyed by name (`as const`, like `CONSUMERS`), with the
+  `OrderedConsumerName` type; the array is `ORDERED_CONSUMER_LIST`.
+- The `service` of `DurableConsumerDefinition`, `OrderedConsumerDefinition` and
+  `CoreSubscriptionDefinition` is an open vocabulary (`OpenVocabulary<ServiceName>`): a new service
+  declares its consumers before `SERVICE_NAMES` lists it, without type assertions.
+
+### Fixed
+
+#### `@darmawanweb/ais-its-contracts`
+
+- The methodology catalog (`./references`: `REFERENCES`, `METHODS`) is synced from
+  `docs/references` (140 references, 91 methods); 0.2.0 shipped it empty. A test guards against an
+  empty catalog and CI checks it against the central repository (`references:check`).
+- `ApiKeyIntrospectionResultSchema` is forward compatible: scopes unknown to this version are
+  dropped (like unknown roles of access tokens) instead of failing the whole introspection.
+
 ### Added
 
-#### `@darmawanweb/ais-its-nest` 0.1.0
+#### `@darmawanweb/ais-its-contracts`
 
-- First release of the NestJS 12 service kit (formerly the unreleased `packages/platform`),
-  ESM only, built with `tsc`; see [`packages/nest/CHANGELOG.md`](packages/nest/CHANGELOG.md).
+- Kind-specific zone properties: `ZONE_PROPERTY_SCHEMAS` (`pipeline.markers`,
+  `shallow_water.depthM`, `tss_lane.directionDeg`/`maxSpeedKn`, harbour `unlocode`/`maxDraughtM`,
+  area `authority`/`legalBasis`, `source`/`note` everywhere), `ZoneProperties<Kind>` and the
+  lenient reader `zoneProperties(zone)`.
+- `legacyHaversineDistance`: the legacy CII haversine (R = 3438 nm) under an unambiguous name.
+
+#### `@darmawanweb/ais-its-nest` 0.2.0
+
+- See [`packages/nest/CHANGELOG.md`](packages/nest/CHANGELOG.md) (first published as 0.1.0, the
+  NestJS 12 service kit with the Detector SDK).
 
 ## [0.2.0] - 2026-11-21
 

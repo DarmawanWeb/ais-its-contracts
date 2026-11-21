@@ -86,7 +86,15 @@ export function haversineDistance(from: GeoPoint, to: GeoPoint): Distance {
   return { nm, meters: nm * METERS_PER_NAUTICAL_MILE };
 }
 
-/** Shorthand for `haversineDistance(from, to).nm`. */
+/**
+ * The legacy CII haversine (`R = 3438 nm`, MVP `calculateDistance`) under an
+ * unambiguous name; same function as {@link haversineDistance}. Use it only
+ * where legacy numerical parity is required (emission segments); geodesic
+ * metres for detectors come from the kit's `geodesicDistanceM`.
+ */
+export const legacyHaversineDistance = haversineDistance;
+
+/** Shorthand for `haversineDistance(from, to).nm` (legacy CII constant). */
 export function haversineNm(from: GeoPoint, to: GeoPoint): number {
   return haversineDistance(from, to).nm;
 }

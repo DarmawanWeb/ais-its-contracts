@@ -16,7 +16,7 @@ import {
   bboxEnvelope,
   type Database,
   DatabaseModule,
-  distanceMeters,
+  distanceM,
   geoJsonToGeography,
   geography,
   geographyAsGeoJson,
@@ -24,7 +24,7 @@ import {
   InjectDb,
   InjectPool,
   pointGeography,
-  withinMeters,
+  withinM,
   withTransaction,
 } from '../src/db/index.js';
 import {
@@ -176,7 +176,7 @@ describe('DatabaseModule', () => {
 
     const [distance] = await db
       .select({
-        meters: distanceMeters(ports.geom, pointGeography(106.8833, -6.0943)),
+        meters: distanceM(ports.geom, pointGeography(106.8833, -6.0943)),
       })
       .from(ports)
       .where(eq(ports.name, 'Tanjung Priok'));
@@ -187,7 +187,7 @@ describe('DatabaseModule', () => {
     const near = await db
       .select({ name: ports.name })
       .from(ports)
-      .where(withinMeters(ports.geom, pointGeography(104.001, 1.161), 500));
+      .where(withinM(ports.geom, pointGeography(104.001, 1.161), 500));
     expect(near).toEqual([{ name: 'Batu Ampar' }]);
   });
 

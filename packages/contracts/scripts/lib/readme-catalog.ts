@@ -10,7 +10,7 @@ import {
   consumersOfEvent,
   CORE_SUBSCRIPTIONS,
   EVENT_DEFINITIONS,
-  ORDERED_CONSUMERS,
+  ORDERED_CONSUMER_LIST,
   SERVICE_NAMES,
   STREAM_LIST,
 } from '../../src/events/index.js';
@@ -88,7 +88,7 @@ export function renderConsumersTable(): string {
         consumer.service,
         consumer.description,
       ]),
-      ...ORDERED_CONSUMERS.map((consumer) => [
+      ...ORDERED_CONSUMER_LIST.map((consumer) => [
         code(consumer.name),
         'ordered (ephemeral)',
         code(consumer.stream),

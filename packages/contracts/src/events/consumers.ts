@@ -1,3 +1,4 @@
+import type { OpenVocabulary } from '../domain/vocabulary.js';
 import type { ServiceName } from './services.js';
 import type { StreamName } from './streams.js';
 import { SUBJECT_FILTERS } from './subjects.js';
@@ -11,8 +12,12 @@ export interface DurableConsumerDefinition {
   readonly durableName: string;
   readonly stream: StreamName;
   readonly filterSubjects: readonly string[];
-  /** Service owning (and ensuring) the consumer. */
-  readonly service: ServiceName;
+  /**
+   * Service owning (and ensuring) the consumer. Open vocabulary: a new
+   * service (e.g. a detector service generated from the template) declares
+   * its consumers before contracts lists it in `SERVICE_NAMES`.
+   */
+  readonly service: OpenVocabulary<ServiceName>;
   /** Event types delivered to the consumer. */
   readonly eventTypes: readonly EventType[];
   /** Explicit acks; nak with exponential backoff; dead-lettered after this many deliveries. */
@@ -155,14 +160,14 @@ export interface OrderedConsumerDefinition {
   readonly name: string;
   readonly stream: StreamName;
   readonly filterSubjects: readonly string[];
-  readonly service: ServiceName;
+  readonly service: OpenVocabulary<ServiceName>;
   readonly eventTypes: readonly EventType[];
   readonly description: string;
 }
 
-/** Ordered consumers of spec 7.3. */
-export const ORDERED_CONSUMERS: readonly OrderedConsumerDefinition[] = [
-  {
+/** Ordered consumers of spec 7.3, keyed by name. */
+export const ORDERED_CONSUMERS = {
+  'notification-positions': {
     name: 'notification-positions',
     stream: 'AIS_POSITION',
     filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
@@ -171,7 +176,7 @@ export const ORDERED_CONSUMERS: readonly OrderedConsumerDefinition[] = [
     description:
       'Realtime position fan-out to WebSocket tile and vessel rooms.',
   },
-  {
+  'notification-safety': {
     name: 'notification-safety',
     stream: 'SAFETY',
     filterSubjects: [SUBJECT_FILTERS.SAFETY_STATE],
@@ -180,7 +185,7 @@ export const ORDERED_CONSUMERS: readonly OrderedConsumerDefinition[] = [
     description:
       'Realtime safety:states / vessel:safety fan-out to tile and vessel rooms.',
   },
-  {
+  'notification-cii': {
     name: 'notification-cii',
     stream: 'EMISSION',
     filterSubjects: [SUBJECT_FILTERS.CII_UPDATED],
@@ -188,13 +193,20 @@ export const ORDERED_CONSUMERS: readonly OrderedConsumerDefinition[] = [
     eventTypes: [EVENT_TYPES.EMISSION_CII_UPDATED],
     description: 'Realtime cii:updated fan-out to organization rooms.',
   },
-];
+} as const satisfies Readonly<Record<string, OrderedConsumerDefinition>>;
+
+/** An ordered consumer name. */
+export type OrderedConsumerName = keyof typeof ORDERED_CONSUMERS;
+
+/** Every ordered consumer definition. */
+export const ORDERED_CONSUMER_LIST: readonly OrderedConsumerDefinition[] =
+  Object.values(ORDERED_CONSUMERS);
 
 /** A core NATS (non JetStream) subscription. */
 export interface CoreSubscriptionDefinition {
   readonly name: string;
   readonly subject: string;
-  readonly service: ServiceName;
+  readonly service: OpenVocabulary<ServiceName>;
   readonly description: string;
 }
 
@@ -220,7 +232,7 @@ export function consumersOfService(
 export function consumersOfEvent(
   type: EventType,
 ): (DurableConsumerDefinition | OrderedConsumerDefinition)[] {
-  return [...CONSUMER_LIST, ...ORDERED_CONSUMERS].filter((consumer) =>
+  return [...CONSUMER_LIST, ...ORDERED_CONSUMER_LIST].filter((consumer) =>
     consumer.eventTypes.includes(type),
   );
 }

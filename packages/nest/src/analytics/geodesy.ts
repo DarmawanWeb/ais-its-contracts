@@ -46,8 +46,10 @@ const toDegrees = (radians: number): number => radians * DEG;
 /**
  * Great-circle distance on a sphere (haversine), metres. Same operations as
  * `@turf/distance` 7 so that legacy thresholds keep their exact behaviour.
+ * Not to be confused with the contracts `haversineDistance` (R = 3438 nm,
+ * legacy CII segment distances).
  */
-export function haversineMeters(
+export function haversineM(
   from: GeoPoint,
   to: GeoPoint,
   radiusM: number = MEAN_EARTH_RADIUS_M,
@@ -68,7 +70,7 @@ export function haversineMeters(
  * non-antipodal points. Nearly antipodal points, where the iteration does
  * not converge, fall back to the haversine distance.
  */
-export function vincentyMeters(from: GeoPoint, to: GeoPoint): number {
+export function vincentyM(from: GeoPoint, to: GeoPoint): number {
   const a = WGS84_SEMI_MAJOR_AXIS_M;
   const b = WGS84_SEMI_MINOR_AXIS_M;
   const f = WGS84_FLATTENING;
@@ -125,8 +127,14 @@ export function vincentyMeters(from: GeoPoint, to: GeoPoint): number {
       return b * A * (sigma - deltaSigma);
     }
   }
-  return haversineMeters(from, to);
+  return haversineM(from, to);
 }
+
+/** @deprecated Use {@link haversineM} (spec §5 unit suffix `…M`). */
+export const haversineMeters = haversineM;
+
+/** @deprecated Use {@link vincentyM} (spec §5 unit suffix `…M`). */
+export const vincentyMeters = vincentyM;
 
 /** Distance between two points in the given model, metres. */
 export function geodesicDistanceM(
@@ -134,9 +142,7 @@ export function geodesicDistanceM(
   to: GeoPoint,
   model: DistanceModel = DEFAULT_DISTANCE_MODEL,
 ): number {
-  return model === 'sphere'
-    ? haversineMeters(from, to)
-    : vincentyMeters(from, to);
+  return model === 'sphere' ? haversineM(from, to) : vincentyM(from, to);
 }
 
 /** Initial great-circle bearing from `from` to `to`, degrees clockwise from north in `[0, 360)`. */
@@ -166,9 +172,20 @@ export function interpolateGreatCircle(
   const lon1 = toRadians(start.lon);
   const lat2 = toRadians(end.lat);
   const lon2 = toRadians(end.lon);
-  const a = [Math.cos(lat1) * Math.cos(lon1), Math.cos(lat1) * Math.sin(lon1), Math.sin(lat1)] as const;
-  const b = [Math.cos(lat2) * Math.cos(lon2), Math.cos(lat2) * Math.sin(lon2), Math.sin(lat2)] as const;
-  const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+  const a = [
+    Math.cos(lat1) * Math.cos(lon1),
+    Math.cos(lat1) * Math.sin(lon1),
+    Math.sin(lat1),
+  ] as const;
+  const b = [
+    Math.cos(lat2) * Math.cos(lon2),
+    Math.cos(lat2) * Math.sin(lon2),
+    Math.sin(lat2),
+  ] as const;
+  const dot = Math.max(
+    -1,
+    Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]),
+  );
   const omega = Math.acos(dot);
   if (omega < 1e-12) return { lat: start.lat, lon: start.lon };
   const wa = Math.sin((1 - fraction) * omega) / Math.sin(omega);

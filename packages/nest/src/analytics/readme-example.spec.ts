@@ -27,6 +27,7 @@ class GeofenceDetector implements Detector<GeofenceConfig> {
   readonly id = 'geofence';
   readonly domain = 'surveillance';
   readonly methodIds = ['geo.geofence_enter'];
+  readonly alertTypes = ['geofence'] as const;
   readonly configSchema = geofenceConfig;
 
   async onPosition(
@@ -55,11 +56,9 @@ class GeofenceDetector implements Detector<GeofenceConfig> {
         },
       });
     }
+    // `open()` only lists this detector's occurrences.
     for (const open of context.alerts.open({ mmsi: position.mmsi })) {
-      if (
-        open.type === 'geofence' &&
-        !inside.some((zone) => zone.id === open.zoneId)
-      ) {
+      if (!inside.some((zone) => zone.id === open.zoneId)) {
         await context.alerts.resolve(open.dedupKey, {
           at: position.time,
           reason: 'left the zone',

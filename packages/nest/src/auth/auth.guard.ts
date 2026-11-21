@@ -129,10 +129,13 @@ export class AuthGuard implements CanActivate {
       readonly ApiKeyScope[] | undefined,
       string
     >(API_KEY_SCOPES_KEY, handler);
-    const ownRequirements = ownPermissions.length > 0 || ownScopes !== undefined;
+    const ownRequirements =
+      ownPermissions.length > 0 || ownScopes !== undefined;
     const publicHandler =
-      this.reflector.get<boolean | undefined, string>(IS_PUBLIC_KEY, handler) ===
-      true;
+      this.reflector.get<boolean | undefined, string>(
+        IS_PUBLIC_KEY,
+        handler,
+      ) === true;
     const publicController =
       this.reflector.get<boolean | undefined, string>(
         IS_PUBLIC_KEY,

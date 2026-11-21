@@ -98,16 +98,22 @@ export function geographyIntersectsBBox(
   return sql<boolean>`ST_Intersects(${column}::geometry, ${bboxEnvelope(bbox)})`;
 }
 
-/** Geodesic distance between two geographies, in meters. */
-export function distanceMeters(from: SQLWrapper, to: SQLWrapper): SQL<number> {
+/** Geodesic distance between two geographies, in meters (`ST_Distance`). */
+export function distanceM(from: SQLWrapper, to: SQLWrapper): SQL<number> {
   return sql<number>`ST_Distance(${from}, ${to})`;
 }
 
 /** `true` when two geographies are within `meters` (index-assisted `ST_DWithin`). */
-export function withinMeters(
+export function withinM(
   from: SQLWrapper,
   to: SQLWrapper,
   meters: number,
 ): SQL<boolean> {
   return sql<boolean>`ST_DWithin(${from}, ${to}, ${meters})`;
 }
+
+/** @deprecated Use {@link distanceM} (spec §5 unit suffix `…M`). */
+export const distanceMeters = distanceM;
+
+/** @deprecated Use {@link withinM} (spec §5 unit suffix `…M`). */
+export const withinMeters = withinM;

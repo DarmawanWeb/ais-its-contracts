@@ -30,7 +30,7 @@ export class NatsConsumerRuntime implements ConsumerRuntime {
     @Optional() @Inject(PinoLogger) logger: PinoLogger | null = null,
   ) {
     this.serviceName = config.SERVICE_NAME;
-    this.durablePrefix = config.NATS_DURABLE_PREFIX ?? '';
+    this.durablePrefix = config.NATS_DURABLE_PREFIX;
     this.runInLogContext =
       logger === null
         ? (fn) => fn()

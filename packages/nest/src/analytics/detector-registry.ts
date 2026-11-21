@@ -394,10 +394,10 @@ export class DetectorRegistry {
         }
         return outcome;
       },
-      resolve: async (dedupKey, options) =>
-        owns(services.alerts.get(dedupKey))
-          ? services.alerts.resolve(dedupKey, options)
-          : false,
+      // Ownership is checked in turn with the key's other operations, so a
+      // raise of this detector that is still persisting is resolved too.
+      resolve: (dedupKey, options = {}) =>
+        services.alerts.resolve(dedupKey, { ...options, accept: owns }),
       get: (dedupKey) => {
         const alert = services.alerts.get(dedupKey);
         return owns(alert) ? alert : undefined;
@@ -420,7 +420,9 @@ export class DetectorRegistry {
 }
 
 /** Declared alert types of a detector, `null` when it declares none. */
-function alertTypesOf(detector: AnyDetector | undefined): readonly AlertType[] | null {
+function alertTypesOf(
+  detector: AnyDetector | undefined,
+): readonly AlertType[] | null {
   return detector?.alertTypes === undefined ? null : [...detector.alertTypes];
 }
 

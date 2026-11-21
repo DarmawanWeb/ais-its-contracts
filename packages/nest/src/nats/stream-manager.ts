@@ -189,11 +189,16 @@ function isNotFound(error: unknown): boolean {
 const STREAM_NAME_EXISTS = 10_058;
 
 function isNameInUse(error: unknown): boolean {
-  return error instanceof JetStreamApiError && error.code === STREAM_NAME_EXISTS;
+  return (
+    error instanceof JetStreamApiError && error.code === STREAM_NAME_EXISTS
+  );
 }
 
 /** Rank of a role: a producer ensure supersedes a consumer one. */
-const ROLE_RANK: Record<StreamEnsureRole, number> = { consumer: 0, producer: 1 };
+const ROLE_RANK: Record<StreamEnsureRole, number> = {
+  consumer: 0,
+  producer: 1,
+};
 
 /**
  * Ensures contracts streams (spec §7.2) according to the caller's
@@ -207,7 +212,10 @@ export class StreamManager {
   private readonly logger = new Logger('NatsStreams');
   private readonly ensured = new Map<
     StreamName,
-    { readonly role: StreamEnsureRole; readonly outcome: Promise<StreamEnsureOutcome> }
+    {
+      readonly role: StreamEnsureRole;
+      readonly outcome: Promise<StreamEnsureOutcome>;
+    }
   >();
 
   constructor(private readonly client: NatsClient) {}
@@ -238,9 +246,9 @@ export class StreamManager {
     const previous = this.ensured.get(name);
     if (previous !== undefined && ROLE_RANK[previous.role] >= ROLE_RANK[role])
       return previous.outcome;
-    const outcome = (previous?.outcome.catch(() => undefined) ?? Promise.resolve()).then(
-      () => this.apply(STREAMS[name], role),
-    );
+    const outcome = (
+      previous?.outcome.catch(() => undefined) ?? Promise.resolve()
+    ).then(() => this.apply(STREAMS[name], role));
     const entry = { role, outcome };
     // A failed attempt may be retried by the next caller.
     outcome.catch(() => {

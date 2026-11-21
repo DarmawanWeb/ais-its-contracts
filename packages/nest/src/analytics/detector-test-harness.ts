@@ -284,6 +284,14 @@ export class DetectorTestHarness {
     return this.registry.describe();
   }
 
+  /**
+   * The harness's metrics in the Prometheus text format (`aisits_detector_*`),
+   * e.g. to assert that a failing hook was counted.
+   */
+  metricsText(): Promise<string> {
+    return this.metrics.render();
+  }
+
   /** Forgets the recorded alerts, updates and resolutions (state is kept). */
   clearRecords(): void {
     this.alerts.length = 0;

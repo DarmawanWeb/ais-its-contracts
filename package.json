@@ -1,6 +1,6 @@
 {
   "name": "ais-its-contracts-workspace",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Shared libraries of AIS Maritime Intelligence v2: @darmawanweb/ais-its-contracts (isomorphic contracts) and @darmawanweb/ais-its-nest (NestJS service kit with the Detector SDK).",
   "license": "UNLICENSED",

@@ -19,8 +19,10 @@ export {
   type WaitForOptions,
 } from './helpers.js';
 export {
+  reapOrphanedTestContainers,
   type StartedTestInfra,
   startTestInfra,
+  TEST_CONTAINER_LABELS,
   TEST_DATABASE,
   TEST_IMAGES,
   TEST_S3_CREDENTIALS,
@@ -40,6 +42,14 @@ export {
   type TestJwtIssuerOptions,
   type TestTokenClaims,
 } from './jwt-issuer.js';
+export {
+  SHARED_TEST_INFRA_ENV,
+  type SharedTestInfra,
+  SharedTestInfraError,
+  testInfra,
+  testInfraGlobalSetup,
+  uniqueName,
+} from './shared-infra.js';
 export {
   dropServiceSchema,
   type ProvisionSchemaOptions,

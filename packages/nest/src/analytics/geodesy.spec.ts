@@ -8,10 +8,12 @@ import {
   destinationPoint,
   distanceToArc,
   geodesicDistanceM,
+  haversineM,
   haversineMeters,
   initialBearingDeg,
   nearestPointOnArc,
   searchBox,
+  vincentyM,
   vincentyMeters,
 } from './geodesy.js';
 
@@ -26,17 +28,17 @@ describe('geodesic distances', () => {
       lat: -(37 + 39 / 60 + 10.1561 / 3600),
       lon: 143 + 55 / 60 + 35.3839 / 3600,
     };
-    expect(vincentyMeters(flinders, buninyong)).toBeCloseTo(54_972.271, 2);
+    expect(vincentyM(flinders, buninyong)).toBeCloseTo(54_972.271, 2);
     // One degree of longitude on the equator: a · π / 180.
-    expect(vincentyMeters({ lat: 0, lon: 0 }, { lat: 0, lon: 1 })).toBeCloseTo(
+    expect(vincentyM({ lat: 0, lon: 0 }, { lat: 0, lon: 1 })).toBeCloseTo(
       111_319.491,
       2,
     );
-    expect(vincentyMeters({ lat: 1, lon: 104 }, { lat: 1, lon: 104 })).toBe(0);
+    expect(vincentyM({ lat: 1, lon: 104 }, { lat: 1, lon: 104 })).toBe(0);
   });
 
   it('falls back to the sphere for antipodal points', () => {
-    const distance = vincentyMeters({ lat: 0, lon: 0 }, { lat: 0, lon: 180 });
+    const distance = vincentyM({ lat: 0, lon: 0 }, { lat: 0, lon: 180 });
     expect(distance).toBeGreaterThan(19_900_000);
     expect(distance).toBeLessThan(20_100_000);
   });
@@ -62,7 +64,7 @@ describe('geodesic distances', () => {
         point([to.lon, to.lat]),
         { units: 'meters' },
       );
-      expect(haversineMeters(from, to)).toBe(expected);
+      expect(haversineM(from, to)).toBe(expected);
       expect(geodesicDistanceM(from, to, 'sphere')).toBe(expected);
     }
   });
@@ -96,7 +98,7 @@ describe('bearings and destinations', () => {
   it('round-trips destination points with haversine distances', () => {
     const origin = { lat: 1.15, lon: 104.05 };
     const target = destinationPoint(origin, 45, 1_852);
-    expect(haversineMeters(origin, target)).toBeCloseTo(1_852, 6);
+    expect(haversineM(origin, target)).toBeCloseTo(1_852, 6);
     expect(initialBearingDeg(origin, target)).toBeCloseTo(45, 6);
   });
 });
@@ -182,5 +184,14 @@ describe('boxes', () => {
       180,
       90,
     ]);
+  });
+});
+
+describe('unit-suffixed names (spec §5)', () => {
+  it('keeps the former names as deprecated aliases of the …M functions', () => {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- asserting the alias
+    expect(haversineMeters).toBe(haversineM);
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- asserting the alias
+    expect(vincentyMeters).toBe(vincentyM);
   });
 });

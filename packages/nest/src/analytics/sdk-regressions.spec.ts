@@ -1,7 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import type { AlertType } from '@darmawanweb/ais-its-contracts/domain';
 import type { AlertRaisedV1 } from '@darmawanweb/ais-its-contracts/events';
+import { Controller, Get } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Test } from '@nestjs/testing';
 import { describe, expect, it } from 'vitest';
+
+import { createFastifyAdapter } from '../http/fastify-adapter.js';
 
 import {
   AlertEmitter,
@@ -9,6 +15,10 @@ import {
   type AlertSignal,
 } from './alert-emitter.js';
 import type { Detector, DetectorCall, DetectorContext } from './detector.js';
+import {
+  ApiDetectorsResponse,
+  DetectorDescriptionDto,
+} from './detector-description.dto.js';
 import { DetectorRegistrationError } from './detector-registry.js';
 import { DetectorTestHarness } from './detector-test-harness.js';
 import { PairSearch } from './pair-search.js';
@@ -73,10 +83,10 @@ describe('AlertEmitter serializes operations per dedupKey', () => {
 
 /** Raises `ews:<mmsi>:z1` for every position. */
 class AlphaDetector implements Detector {
-  readonly id = 'alpha';
+  readonly id: string = 'alpha';
   readonly domain = 'safety' as const;
   readonly methodIds = ['ews.pipeline_distance_status'];
-  readonly alertTypes = ['ews'] as const;
+  readonly alertTypes: readonly AlertType[] = ['ews'];
 
   async onPosition(context: DetectorContext, position: VesselPosition) {
     await context.alerts.raise({
@@ -125,7 +135,7 @@ describe('DetectorContext.alerts is scoped to its detector', () => {
   it('checks declared alert types at registration and when raising', async () => {
     class WrongDomain extends AlphaDetector {
       override readonly id = 'wrong';
-      override readonly alertTypes = ['transhipment'] as never;
+      override readonly alertTypes: readonly AlertType[] = ['transhipment'];
     }
     expect(() =>
       DetectorTestHarness.create({ detectors: [new WrongDomain()] }),
@@ -133,7 +143,7 @@ describe('DetectorContext.alerts is scoped to its detector', () => {
 
     class Undeclared extends AlphaDetector {
       override readonly id = 'undeclared';
-      override readonly alertTypes = ['collision'] as const;
+      override readonly alertTypes: readonly AlertType[] = ['collision'];
     }
     const harness = DetectorTestHarness.create({
       detectors: [new Undeclared()],
@@ -257,7 +267,8 @@ describe('DetectorTestHarness tracks without times', () => {
       { mmsi: A, lat: 1.02, lon: 104 },
     ]);
     expect(outcomes).toEqual(['processed', 'processed', 'processed']);
-    expect(seen[2]! - seen[0]!).toBe(20_000);
+    expect(seen).toHaveLength(3);
+    expect((seen[2] ?? 0) - (seen[0] ?? 0)).toBe(20_000);
   });
 });
 
@@ -284,6 +295,58 @@ describe('CompiledGeometry follows geodesic polygon edges', () => {
     });
     const outside = { lon: 105, lat: 5.2 };
     expect(geometry.contains(outside)).toBe(false);
-    expect(geometry.distance(outside, 'wgs84').distanceM).toBeGreaterThan(5_000);
+    expect(geometry.distance(outside, 'wgs84').distanceM).toBeGreaterThan(
+      5_000,
+    );
+  });
+});
+
+describe('DetectorDescriptionDto / ApiDetectorsResponse', () => {
+  it('copies a description and documents the detectors endpoint', async () => {
+    const harness = DetectorTestHarness.create({
+      detectors: [new AlphaDetector()],
+    });
+    const [description] = harness.describe();
+    expect(description).toBeDefined();
+    if (description === undefined) return;
+    expect(new DetectorDescriptionDto(description)).toEqual(description);
+
+    @Controller('safety')
+    class DetectorsController {
+      @Get('detectors')
+      @ApiDetectorsResponse()
+      detectors(): DetectorDescriptionDto[] {
+        return harness.describe().map((d) => new DetectorDescriptionDto(d));
+      }
+    }
+    const moduleRef = await Test.createTestingModule({
+      controllers: [DetectorsController],
+    }).compile();
+    const app = moduleRef.createNestApplication(createFastifyAdapter());
+    await app.init();
+    try {
+      const document = SwaggerModule.createDocument(
+        app,
+        new DocumentBuilder().build(),
+      );
+      expect(
+        document.paths['/safety/detectors']?.get?.responses['200'],
+      ).toMatchObject({
+        content: {
+          'application/json': {
+            schema: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/DetectorDescriptionDto' },
+            },
+          },
+        },
+      });
+      const schema = document.components?.schemas?.DetectorDescriptionDto as
+        { readonly required?: readonly string[] } | undefined;
+      for (const key of ['id', 'domain', 'methodIds', 'enabled'])
+        expect(schema?.required).toContain(key);
+    } finally {
+      await app.close();
+    }
   });
 });

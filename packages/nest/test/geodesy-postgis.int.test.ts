@@ -149,21 +149,32 @@ describe('geodesic distances vs PostGIS ST_Distance(geography)', () => {
         [JSON.stringify(wide), probe.lon, probe.lat],
       );
       const expected = rows[0];
-      expect(compiled.contains(probe), JSON.stringify(probe)).toBe(expected?.covers);
+      expect(compiled.contains(probe), JSON.stringify(probe)).toBe(
+        expected?.covers,
+      );
       // Containment and distance tell the same story, within metres of PostGIS.
       const distance = compiled.distance(probe, 'wgs84');
       expect(distance.inside).toBe(expected?.covers);
-      expect(Math.abs(distance.distanceM - (expected?.d ?? 0))).toBeLessThan(25);
+      expect(Math.abs(distance.distanceM - (expected?.d ?? 0))).toBeLessThan(
+        25,
+      );
     }
   });
 
   it('filters by bbox along meridians and parallels (geographyIntersectsBBox)', async () => {
     const dialect = new PgDialect();
-    const hit = async (lon: number, lat: number, bbox: [number, number, number, number]) => {
+    const hit = async (
+      lon: number,
+      lat: number,
+      bbox: [number, number, number, number],
+    ) => {
       const query = dialect.sqlToQuery(
         sql`SELECT ${geographyIntersectsBBox(pointGeography(lon, lat), bbox)} AS hit`,
       );
-      const { rows } = await client.query<{ hit: boolean }>(query.sql, query.params);
+      const { rows } = await client.query<{ hit: boolean }>(
+        query.sql,
+        query.params,
+      );
       return rows[0]?.hit;
     };
     expect(await hit(118, -2.1, [95, -11, 141, -2])).toBe(true);

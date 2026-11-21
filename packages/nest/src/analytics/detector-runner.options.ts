@@ -20,6 +20,14 @@ export const ALERT_PERSISTENCE = 'AISITS_ALERT_PERSISTENCE';
 /** Injection token of the SDK clock (`() => Date`). */
 export const DETECTOR_CLOCK = 'AISITS_DETECTOR_CLOCK';
 
+/**
+ * Injection token of the variables `DETECTORS` and `<ID>_*` are read from
+ * (default `DetectorRunnerOptions.env ?? process.env`, read when the module
+ * is built, i.e. after `loadConfig()` loaded `.env`). Override it in tests:
+ * `buildTestApp(AppModule, { config, overrides: [{ provide: DETECTOR_ENV, useValue: { DETECTORS: 'ews' } }] })`.
+ */
+export const DETECTOR_ENV = 'AISITS_DETECTOR_ENV';
+
 /** Options of `DetectorRunnerModule.forRoot()`. */
 export interface DetectorRunnerOptions {
   /**

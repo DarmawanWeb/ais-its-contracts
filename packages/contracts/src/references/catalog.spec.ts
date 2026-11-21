@@ -201,6 +201,20 @@ describe('createMethodologyIndex', () => {
 });
 
 describe('shipped catalog lookups', () => {
+  it('ships the synced catalog, never an empty one (spec §17)', () => {
+    // docs/references of the central repository: 140 references, 91 methods
+    // when this version was released (references:check keeps them in sync).
+    expect(REFERENCES.length).toBeGreaterThanOrEqual(140);
+    expect(METHODS.length).toBeGreaterThanOrEqual(91);
+    for (const id of [
+      'ews.pipeline_distance_status',
+      'collision.cpa_tcpa',
+      'geo.geofence_enter',
+    ]) {
+      expect(getMethod(id), id).toBeDefined();
+    }
+  });
+
   it('answers from REFERENCES and METHODS', () => {
     expect(Array.isArray(REFERENCES)).toBe(true);
     expect(Array.isArray(METHODS)).toBe(true);

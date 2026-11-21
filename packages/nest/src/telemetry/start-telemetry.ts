@@ -1,6 +1,7 @@
 import { register } from 'node:module';
 
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
+import type { Instrumentation } from '@opentelemetry/instrumentation';
 
 /** Options of {@link startTelemetry}. */
 export interface TelemetryOptions {
@@ -19,12 +20,13 @@ export interface TelemetryOptions {
    */
   readonly esmLoaderHook?: boolean | undefined;
   /**
-   * Instrumentations of `@opentelemetry/auto-instrumentations-node` to enable
-   * (package suffixes). `OTEL_NODE_ENABLED_INSTRUMENTATIONS` wins when set.
-   * Default `['http', 'pg', 'ioredis', 'undici']`; Fastify is always
-   * instrumented with `@fastify/otel`.
+   * Instrumentations to enable, by the suffix of their package
+   * (`@opentelemetry/instrumentation-<name>`, see
+   * {@link SUPPORTED_INSTRUMENTATIONS}). `OTEL_NODE_ENABLED_INSTRUMENTATIONS`
+   * (comma list) wins when set; unknown names are ignored with a warning.
+   * Default: all of them. Fastify is always instrumented with `@fastify/otel`.
    */
-  readonly instrumentations?: readonly string[] | undefined;
+  readonly instrumentations?: readonly InstrumentationName[] | undefined;
   /** Paths whose requests are not traced. Default `/health/*` and `/metrics`. */
   readonly ignorePaths?: readonly string[] | undefined;
 }
@@ -37,12 +39,24 @@ export interface TelemetryHandle {
   shutdown(): Promise<void>;
 }
 
-/** Instrumentations enabled by default (spec §10: HTTP, Fastify, pg, ioredis). */
-export const DEFAULT_INSTRUMENTATIONS: readonly string[] = [
+/**
+ * Instrumentations the kit ships (its only OpenTelemetry instrumentation
+ * dependencies, which keeps service images small): incoming and outgoing
+ * HTTP, `fetch` (undici), PostgreSQL (`pg`) and Valkey (`ioredis`).
+ */
+export const SUPPORTED_INSTRUMENTATIONS = [
   'http',
+  'undici',
   'pg',
   'ioredis',
-  'undici',
+] as const;
+
+/** Name of an instrumentation in {@link SUPPORTED_INSTRUMENTATIONS}. */
+export type InstrumentationName = (typeof SUPPORTED_INSTRUMENTATIONS)[number];
+
+/** Instrumentations enabled by default: all {@link SUPPORTED_INSTRUMENTATIONS}. */
+export const DEFAULT_INSTRUMENTATIONS: readonly InstrumentationName[] = [
+  ...SUPPORTED_INSTRUMENTATIONS,
 ];
 
 /** Requests that are not traced by default. */
@@ -59,23 +73,64 @@ const DISABLED: TelemetryHandle = {
 
 let active: Promise<TelemetryHandle> | undefined;
 
+const isInstrumentationName = (name: string): name is InstrumentationName =>
+  (SUPPORTED_INSTRUMENTATIONS as readonly string[]).includes(name);
+
 /**
- * Runs `create` with `OTEL_NODE_ENABLED_INSTRUMENTATIONS` set to `names`
- * unless the operator already set it, so the standard variable keeps
- * overriding the platform's default selection.
+ * The instrumentations to enable: `OTEL_NODE_ENABLED_INSTRUMENTATIONS`
+ * (comma list of names) when set, else `configured`.
  */
-function withEnabledInstrumentations<T>(
-  names: readonly string[],
-  create: () => T,
-): T {
-  const variable = 'OTEL_NODE_ENABLED_INSTRUMENTATIONS';
-  if (process.env[variable] !== undefined) return create();
-  process.env[variable] = names.join(',');
-  try {
-    return create();
-  } finally {
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- restoring the environment
-    delete process.env[variable];
+export function enabledInstrumentations(
+  configured: readonly InstrumentationName[] = DEFAULT_INSTRUMENTATIONS,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): InstrumentationName[] {
+  const variable = env.OTEL_NODE_ENABLED_INSTRUMENTATIONS;
+  if (variable === undefined) return [...new Set(configured)];
+  const names = variable
+    .split(',')
+    .map((name) => name.trim().replace(/^@opentelemetry\/instrumentation-/, ''))
+    .filter((name) => name !== '');
+  const unknown = names.filter((name) => !isInstrumentationName(name));
+  if (unknown.length > 0) {
+    diag.warn(
+      `OTEL_NODE_ENABLED_INSTRUMENTATIONS: ignoring unsupported instrumentation(s) ${unknown.join(', ')} ` +
+        `(supported: ${SUPPORTED_INSTRUMENTATIONS.join(', ')})`,
+    );
+  }
+  return [...new Set(names.filter(isInstrumentationName))];
+}
+
+/** Creates one instrumentation (loaded lazily: nothing is imported while tracing is off). */
+async function createInstrumentation(
+  name: InstrumentationName,
+  ignored: ReadonlySet<string>,
+): Promise<Instrumentation> {
+  switch (name) {
+    case 'http': {
+      const { HttpInstrumentation } =
+        await import('@opentelemetry/instrumentation-http');
+      return new HttpInstrumentation({
+        ignoreIncomingRequestHook: (request) => {
+          const path = request.url?.split('?', 1)[0];
+          return path !== undefined && ignored.has(path);
+        },
+      });
+    }
+    case 'undici': {
+      const { UndiciInstrumentation } =
+        await import('@opentelemetry/instrumentation-undici');
+      return new UndiciInstrumentation();
+    }
+    case 'pg': {
+      const { PgInstrumentation } =
+        await import('@opentelemetry/instrumentation-pg');
+      return new PgInstrumentation();
+    }
+    case 'ioredis': {
+      const { IORedisInstrumentation } =
+        await import('@opentelemetry/instrumentation-ioredis');
+      return new IORedisInstrumentation();
+    }
   }
 }
 
@@ -146,29 +201,20 @@ async function start(options: TelemetryOptions): Promise<TelemetryHandle> {
   const [
     { NodeSDK },
     { OTLPTraceExporter },
-    { getNodeAutoInstrumentations },
     { resourceFromAttributes },
     { FastifyOtelInstrumentation },
   ] = await Promise.all([
     import('@opentelemetry/sdk-node'),
     import('@opentelemetry/exporter-trace-otlp-http'),
-    import('@opentelemetry/auto-instrumentations-node'),
     import('@opentelemetry/resources'),
     import('@fastify/otel'),
   ]);
 
   const ignored = new Set(options.ignorePaths ?? DEFAULT_IGNORED_PATHS);
-  const instrumentations = withEnabledInstrumentations(
-    options.instrumentations ?? DEFAULT_INSTRUMENTATIONS,
-    () =>
-      getNodeAutoInstrumentations({
-        '@opentelemetry/instrumentation-http': {
-          ignoreIncomingRequestHook: (request) => {
-            const path = request.url?.split('?', 1)[0];
-            return path !== undefined && ignored.has(path);
-          },
-        },
-      }),
+  const instrumentations = await Promise.all(
+    enabledInstrumentations(options.instrumentations).map((name) =>
+      createInstrumentation(name, ignored),
+    ),
   );
 
   const sdk = new NodeSDK({

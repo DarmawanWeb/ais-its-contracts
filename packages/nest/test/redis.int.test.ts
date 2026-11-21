@@ -103,7 +103,9 @@ describe('RedisModule and rate limiters', () => {
       // A successful attempt does not use up capacity.
       const other = 'someone@example.com';
       for (let attempt = 0; attempt < 10; attempt += 1)
-        expect(await guardAttempt(limiter, other, async () => 'ok')).toBe('ok');
+        expect(
+          await guardAttempt(limiter, other, () => Promise.resolve('ok')),
+        ).toBe('ok');
       expect((await limiter.peek(other)).remaining).toBe(5);
     }
   });

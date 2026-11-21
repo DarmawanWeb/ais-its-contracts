@@ -8,7 +8,7 @@ import {
   consumersOfService,
   CORE_SUBSCRIPTIONS,
   DEFAULT_MAX_DELIVER,
-  ORDERED_CONSUMERS,
+  ORDERED_CONSUMER_LIST,
 } from './consumers.js';
 import { EVENT_SCHEMAS } from './registry.js';
 import { isServiceName, SERVICE_NAMES } from './services.js';
@@ -128,14 +128,14 @@ describe('CONSUMERS', () => {
   });
 
   it('declares ordered consumers and core subscriptions of notification and telemetry', () => {
-    expect(ORDERED_CONSUMERS.map((c) => [c.name, c.stream, c.service])).toEqual(
-      [
-        ['notification-positions', 'AIS_POSITION', 'notification'],
-        ['notification-safety', 'SAFETY', 'notification'],
-        ['notification-cii', 'EMISSION', 'notification'],
-      ],
-    );
-    for (const consumer of ORDERED_CONSUMERS) {
+    expect(
+      ORDERED_CONSUMER_LIST.map((c) => [c.name, c.stream, c.service]),
+    ).toEqual([
+      ['notification-positions', 'AIS_POSITION', 'notification'],
+      ['notification-safety', 'SAFETY', 'notification'],
+      ['notification-cii', 'EMISSION', 'notification'],
+    ]);
+    for (const consumer of ORDERED_CONSUMER_LIST) {
       for (const type of consumer.eventTypes) {
         expect(EVENT_CATALOG[type].stream).toBe(consumer.stream);
       }
@@ -176,7 +176,7 @@ describe('CONSUMERS', () => {
   it('declares no consumer of the removed detection service', () => {
     const names = [
       ...CONSUMER_LIST.map((c) => c.durableName),
-      ...ORDERED_CONSUMERS.map((c) => c.name),
+      ...ORDERED_CONSUMER_LIST.map((c) => c.name),
     ];
     expect(names.filter((name) => name.startsWith('detection'))).toEqual([]);
     expect(SERVICE_NAMES).not.toContain('detection');

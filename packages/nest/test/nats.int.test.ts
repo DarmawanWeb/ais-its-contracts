@@ -183,6 +183,7 @@ describe('NATS JetStream kit', () => {
       data: { mmsi: MMSI.ok },
     });
     expect(ack.duplicate).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the deprecated signature is still supported
     const again = await publisher.publish(
       subjects.fuelReading(MMSI.ok),
       EVENT_TYPES.FUEL_READING_RECORDED,
@@ -219,6 +220,7 @@ describe('NATS JetStream kit', () => {
 
   it('refuses an explicit subject that is not the event subject', async () => {
     await expect(
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- the deprecated signature is still supported
       publisher.publish(
         subjects.fuelReading(MMSI.ok + 100),
         EVENT_TYPES.FUEL_READING_RECORDED,
@@ -260,6 +262,7 @@ describe('NATS JetStream kit', () => {
 
   it('refuses payloads that violate the contract before publishing', async () => {
     await expect(
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- the deprecated signature is still supported
       publisher.publish(
         subjects.fuelReading(MMSI.ok),
         EVENT_TYPES.FUEL_READING_RECORDED,

@@ -61,9 +61,17 @@ export class EventConsumers
 
   /** Stops pulling and waits for in-flight handlers (bounded by `drainTimeoutMs`). */
   async beforeApplicationShutdown(): Promise<void> {
+    if (this.runners.length === 0) return;
     const timeout = this.options.drainTimeoutMs ?? 25_000;
+    const startedAt = performance.now();
+    this.logger.log(
+      `Draining ${this.runners.length} durable consumer(s) (up to ${timeout} ms)`,
+    );
     await Promise.all(this.runners.map((runner) => runner.stop(timeout)));
     this.runners = [];
+    this.logger.log(
+      `Durable consumers drained in ${Math.round(performance.now() - startedAt)} ms`,
+    );
   }
 
   private discoverRunners(): RunningConsumer[] {

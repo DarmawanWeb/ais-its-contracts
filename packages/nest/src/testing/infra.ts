@@ -1,5 +1,8 @@
+import { hostname } from 'node:os';
+
 import {
   GenericContainer,
+  getContainerRuntimeClient,
   type StartedTestContainer,
   Wait,
 } from 'testcontainers';
@@ -95,6 +98,66 @@ export type StartedTestInfra<Options extends TestInfraOptions> = {
   stop(): Promise<void>;
 };
 
+/** Labels of the containers started by {@link startTestInfra}. */
+export const TEST_CONTAINER_LABELS = {
+  /** Marks a container of the kit's test infrastructure. */
+  marker: 'org.aisits.test',
+  /** PID of the process that started it. */
+  pid: 'org.aisits.test.pid',
+  /** Host name of that process. */
+  host: 'org.aisits.test.host',
+} as const;
+
+/** A container labelled with the starting process (see {@link reapOrphanedTestContainers}). */
+function testContainer(image: string): GenericContainer {
+  return new GenericContainer(image).withLabels({
+    [TEST_CONTAINER_LABELS.marker]: 'true',
+    [TEST_CONTAINER_LABELS.pid]: String(process.pid),
+    [TEST_CONTAINER_LABELS.host]: hostname(),
+  });
+}
+
+/** `false` only when no process `pid` exists (EPERM: it exists). */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Removes test containers left behind by crashed or killed runs on this
+ * host: containers labelled by {@link startTestInfra} whose starting
+ * process no longer exists. Without the Ryuk reaper
+ * (`TESTCONTAINERS_RYUK_DISABLED=true`) nothing else removes them;
+ * `startTestInfra` calls it first in that case. Never throws.
+ *
+ * @returns how many containers were removed.
+ */
+export async function reapOrphanedTestContainers(): Promise<number> {
+  try {
+    const client = await getContainerRuntimeClient();
+    const host = hostname();
+    const orphans = (await client.container.list()).filter((info) => {
+      const labels = info.Labels;
+      if (labels[TEST_CONTAINER_LABELS.marker] !== 'true') return false;
+      if (labels[TEST_CONTAINER_LABELS.host] !== host) return false;
+      const pid = Number(labels[TEST_CONTAINER_LABELS.pid]);
+      return Number.isInteger(pid) && pid > 0 && !processAlive(pid);
+    });
+    const removed = await Promise.allSettled(
+      orphans.map((info) =>
+        client.container.getById(info.Id).remove({ force: true, v: true }),
+      ),
+    );
+    return removed.filter((result) => result.status === 'fulfilled').length;
+  } catch {
+    return 0;
+  }
+}
+
 async function waitForPostgres(url: string, timeoutMs: number): Promise<void> {
   await retryUntilDeadline(
     async () => {
@@ -117,7 +180,7 @@ async function startPostgres(
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
 ): Promise<[StartedTestContainer, TestPostgres]> {
-  const container = await new GenericContainer(TEST_IMAGES.postgres)
+  const container = await testContainer(TEST_IMAGES.postgres)
     .withEnvironment({
       POSTGRES_PASSWORD: 'postgres',
       POSTGRES_DB: TEST_DATABASE,
@@ -149,7 +212,7 @@ async function startNats(
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
 ): Promise<[StartedTestContainer, TestNats]> {
-  const container = await new GenericContainer(TEST_IMAGES.nats)
+  const container = await testContainer(TEST_IMAGES.nats)
     .withCommand(['-js', '-m', '8222'])
     .withExposedPorts(4222, 8222)
     .withWaitStrategy(Wait.forLogMessage(/Server is ready/))
@@ -170,7 +233,7 @@ async function startRedis(
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
 ): Promise<[StartedTestContainer, TestRedis]> {
-  const container = await new GenericContainer(TEST_IMAGES.redis)
+  const container = await testContainer(TEST_IMAGES.redis)
     .withExposedPorts(6379)
     .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
     .withStartupTimeout(timeoutMs)
@@ -182,11 +245,26 @@ async function startRedis(
   ];
 }
 
+/** RustFS listens before it serves: wait until the S3 API answers below 500. */
+async function waitForS3(endpoint: string, timeoutMs: number): Promise<void> {
+  await retryUntilDeadline(
+    async () => {
+      const response = await fetch(endpoint, {
+        signal: AbortSignal.timeout(3000),
+      });
+      await response.body?.cancel();
+      if (response.status >= 500)
+        throw new Error(`S3 endpoint answered ${response.status}`);
+    },
+    { deadlineMs: timeoutMs, initialDelayMs: 200, maxDelayMs: 1000 },
+  );
+}
+
 async function startS3(
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
 ): Promise<[StartedTestContainer, TestS3]> {
-  const container = await new GenericContainer(TEST_IMAGES.s3)
+  const container = await testContainer(TEST_IMAGES.s3)
     .withEnvironment({
       RUSTFS_ACCESS_KEY: TEST_S3_CREDENTIALS.accessKey,
       RUSTFS_SECRET_KEY: TEST_S3_CREDENTIALS.secretKey,
@@ -199,10 +277,12 @@ async function startS3(
     .withStartupTimeout(timeoutMs)
     .start();
   track(container);
+  const endpoint = `http://${container.getHost()}:${container.getMappedPort(9000)}`;
+  await waitForS3(endpoint, timeoutMs);
   return [
     container,
     {
-      endpoint: `http://${container.getHost()}:${container.getMappedPort(9000)}`,
+      endpoint,
       region: TEST_S3_CREDENTIALS.region,
       accessKey: TEST_S3_CREDENTIALS.accessKey,
       secretKey: TEST_S3_CREDENTIALS.secretKey,
@@ -214,7 +294,7 @@ async function startSmtp(
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
 ): Promise<[StartedTestContainer, TestSmtp]> {
-  const container = await new GenericContainer(TEST_IMAGES.smtp)
+  const container = await testContainer(TEST_IMAGES.smtp)
     .withEnvironment({
       MP_SMTP_AUTH_ACCEPT_ANY: 'true',
       MP_SMTP_AUTH_ALLOW_INSECURE: 'true',
@@ -250,6 +330,8 @@ export async function startTestInfra<const Options extends TestInfraOptions>(
   options: Options,
 ): Promise<StartedTestInfra<Options>> {
   const timeoutMs = options.startupTimeoutMs ?? 180_000;
+  if (process.env.TESTCONTAINERS_RYUK_DISABLED === 'true')
+    await reapOrphanedTestContainers();
   const starters: Partial<
     Record<
       keyof TestServices,

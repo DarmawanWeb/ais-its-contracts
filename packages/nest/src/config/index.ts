@@ -11,6 +11,10 @@ export {
 } from './define-config.js';
 export { APP_CONFIG, ConfigModule, InjectConfig } from './config.module.js';
 export {
+  documentationConfig,
+  DOCUMENTATION_ENV,
+} from './documentation-config.js';
+export {
   type BaseConfig,
   type BaseEnv,
   baseEnvSchema,

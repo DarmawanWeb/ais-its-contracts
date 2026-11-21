@@ -1,6 +1,6 @@
 {
   "name": "@darmawanweb/ais-its-contracts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Isomorphic contracts of AIS Maritime Intelligence: event envelope and payload schemas, NATS streams and subjects, roles and permissions, realtime protocol, API problem details, domain vocabulary and the methodology catalog.",
   "keywords": [
     "ais",

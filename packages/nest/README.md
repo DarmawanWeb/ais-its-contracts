@@ -8,17 +8,20 @@ audit, health, metrics, tracing, an internal HTTP client, test helpers and the *
 (spec §18) on which the safety and surveillance services are built.
 
 - ESM only (`"type": "module"`, built with `tsc`), Node.js ≥ 22.12 (24 in Docker/CI).
-- Depends on [`@darmawanweb/ais-its-contracts`](../contracts) `^0.2.0` (events, subjects,
+- Depends on [`@darmawanweb/ais-its-contracts`](../contracts) `^0.3.0` (events, subjects,
   permissions, problem types, alert registry).
 - NestJS, Fastify, drizzle, swagger, terminus, class-validator/transformer, reflect-metadata and
   rxjs are **peer dependencies**; `testcontainers` and `@nestjs/testing` are optional peers used
-  only by `./testing`.
+  only by `./testing`. `pg` and `ioredis` are the kit's own dependencies: their types are
+  re-exported (`Pool`, `PoolClient` from `./db`, `Redis` from `./redis`), so services need no
+  direct dependency on them under pnpm's strict layout.
 
 ```bash
 pnpm add @darmawanweb/ais-its-contracts @darmawanweb/ais-its-nest \
   @nestjs/common @nestjs/core @nestjs/platform-fastify @nestjs/swagger @nestjs/terminus \
   fastify drizzle-orm class-validator class-transformer reflect-metadata rxjs zod
-pnpm add -D @nestjs/testing testcontainers vitest unplugin-swc @swc/core pino-pretty
+pnpm add -D typescript@~6.0.3 @types/node@^24 vitest@^4.1 unplugin-swc @swc/core \
+  @nestjs/testing testcontainers pino-pretty
 ```
 
 Inside the central repository the package resolves through the pnpm workspace; elsewhere map the
@@ -29,10 +32,10 @@ Inside the central repository the package resolves through the pnpm workspace; e
 | Import                                    | What                                                                                                             |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `@darmawanweb/ais-its-nest`               | `bootstrapService`, `exportOpenApi`, `defineConfig`/`loadConfig`/`ConfigModule`/`@InjectConfig`, errors, logging |
-| `@darmawanweb/ais-its-nest/http`          | `ProblemDetailsFilter`, `createValidationPipe`, `configureApp`, OpenAPI helpers, Fastify adapter                 |
-| `@darmawanweb/ais-its-nest/db`            | `DatabaseModule`, `@InjectPool`/`@InjectDb`, `withTransaction`, PostGIS helpers, migrator, `runMigrationsCli`    |
-| `@darmawanweb/ais-its-nest/nats`          | `NatsModule`, `EventPublisher`, `@EventHandler`, `@OrderedEventHandler`, `OrderedConsumers`, `StreamReplayer`    |
-| `@darmawanweb/ais-its-nest/redis`         | `RedisModule`, `@InjectRedis`, `FixedWindowRateLimiter`, `SlidingWindowRateLimiter`                              |
+| `@darmawanweb/ais-its-nest/http`          | `ProblemDetailsFilter`, validation pipe, OpenAPI helpers, Fastify adapter, list/query DTOs (`PageQueryDto`, …)   |
+| `@darmawanweb/ais-its-nest/db`            | `DatabaseModule`, `@InjectPool`/`@InjectDb`, `withTransaction`, `withIdempotency`, PostGIS helpers, migrator     |
+| `@darmawanweb/ais-its-nest/nats`          | `NatsModule`, `EventPublisher`, `@EventHandler`, `@OrderedEventHandler`, `@CoreSubscriptionHandler`, outbox      |
+| `@darmawanweb/ais-its-nest/redis`         | `RedisModule`, `@InjectRedis`, `FixedWindowRateLimiter`, `SlidingWindowRateLimiter`, `guardAttempt`              |
 | `@darmawanweb/ais-its-nest/auth`          | `AuthModule` (global default-deny guard), decorators, principals, `assertOrgAccess`, `verifyAccessToken`         |
 | `@darmawanweb/ais-its-nest/audit`         | `AuditModule`, `AuditService.record()`                                                                           |
 | `@darmawanweb/ais-its-nest/health`        | `HealthModule`, `@ReadinessCheck()` for custom indicators                                                        |
@@ -40,7 +43,11 @@ Inside the central repository the package resolves through the pnpm workspace; e
 | `@darmawanweb/ais-its-nest/telemetry`     | `startTelemetry`, W3C trace context helpers, `withSpan`                                                          |
 | `@darmawanweb/ais-its-nest/internal-http` | `InternalHttpClient`, `InternalHttpError`                                                                        |
 | `@darmawanweb/ais-its-nest/analytics`     | Detector SDK: `Detector`, `@RegisterDetector`, `DetectorRunnerModule`, state, indexes, `AlertEmitter`, harness   |
-| `@darmawanweb/ais-its-nest/testing`       | `startTestInfra`, `provisionServiceSchema`, `createTestJwtIssuer`, fake API keys, `buildTestApp`, `waitFor`      |
+| `@darmawanweb/ais-its-nest/testing`       | `startTestInfra`, `testInfraGlobalSetup`/`testInfra`, `provisionServiceSchema`, JWT issuer, `buildTestApp`, …    |
+| `@darmawanweb/ais-its-nest/internal`      | runner plumbing for the kit's own tests and diagnostics — **no semver guarantees**, never import it in services  |
+
+The public API of every subpath is recorded in [`etc/api-report.json`](etc/api-report.json) and
+checked in CI (`pnpm check:package`), so every addition or removal is a reviewed semver decision.
 
 ## The lifecycle rule
 
@@ -65,9 +72,13 @@ handlers, consumers or lifecycle hooks — never at construction time.
 
 The surveillance-style service below has configuration, a migration, a database-backed event
 repository, a durable consumer, a detector, an authenticated route, Swagger, metrics and health.
-It is the code of the scratch project used to verify each release.
+Every file is shown, and CI rebuilds it from this README (`pnpm check:readme`: the blocks below
+are written into a pnpm project, the install commands above run against the packed tarballs,
+then typecheck, build, `openapi` and the tests); `templates/nest-service` of the central
+repository is the full-featured version of this layout (`pnpm new:service`).
 
 ```text
+tsconfig.json / tsconfig.build.json
 migrations/0001_init.sql
 src/config.ts               zod env schema (base + own variables)
 src/openapi.options.ts
@@ -80,6 +91,68 @@ src/main.ts                 telemetry first, then the server
 src/server.ts               bootstrapService
 src/migrate.ts              pnpm migrate
 src/openapi.ts              pnpm openapi (no infrastructure needed)
+```
+
+```jsonc
+// tsconfig.json — type-checks src and test (`pnpm typecheck`)
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+    "skipLibCheck": true, // drizzle-orm ships declarations of every driver
+    "sourceMap": true,
+    "types": ["node"],
+    "noEmit": true,
+  },
+  "include": ["src", "test"],
+}
+```
+
+```jsonc
+// tsconfig.build.json — compiles src to dist (`pnpm build`)
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "rootDir": "src", "outDir": "dist" },
+  "include": ["src"],
+  "exclude": ["src/**/*.spec.ts"],
+}
+```
+
+```sql
+-- migrations/0001_init.sql
+CREATE TABLE vessels (
+  vessel_id uuid PRIMARY KEY,
+  mmsi integer NOT NULL UNIQUE,
+  org_id uuid,
+  updated_at timestamptz NOT NULL
+);
+
+CREATE TABLE events (
+  id uuid NOT NULL,
+  time timestamptz NOT NULL,
+  detector text NOT NULL,
+  type text NOT NULL,
+  severity text NOT NULL CHECK (severity IN ('info', 'warning', 'critical')),
+  mmsi integer NOT NULL,
+  related_mmsi integer,
+  zone_id uuid,
+  dedup_key text NOT NULL,
+  method_id text NOT NULL,
+  title text NOT NULL,
+  message text NOT NULL,
+  data jsonb NOT NULL DEFAULT '{}',
+  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  resolved_at timestamptz,
+  PRIMARY KEY (id, time)
+);
+SELECT create_hypertable('events', by_range('time', INTERVAL '7 days'));
+CREATE INDEX events_open_dedup_key ON events (dedup_key) WHERE status = 'open';
 ```
 
 ```ts
@@ -145,7 +218,8 @@ export class AppModule {}
 ```ts
 // src/detectors.controller.ts
 import {
-  type DetectorDescription,
+  ApiDetectorsResponse,
+  DetectorDescriptionDto,
   DetectorRegistry,
 } from '@darmawanweb/ais-its-nest/analytics';
 import { RequirePermissions } from '@darmawanweb/ais-its-nest/auth';
@@ -159,8 +233,61 @@ export class DetectorsController {
 
   @RequirePermissions('surveillance:read')
   @Get()
-  list(): DetectorDescription[] {
-    return this.registry.describe(); // ids, method ids, active thresholds
+  @ApiDetectorsResponse() // documented response schema
+  list(): DetectorDescriptionDto[] {
+    // ids, domains, method ids, alert types and active thresholds
+    return this.registry
+      .describe()
+      .map((detector) => new DetectorDescriptionDto(detector));
+  }
+}
+```
+
+```ts
+// src/events/surveillance-events.repository.ts — the AlertEmitter persistence hook
+import type { AlertRaisedV1 } from '@darmawanweb/ais-its-contracts/events';
+import type {
+  AlertPersistence,
+  AlertResolution,
+} from '@darmawanweb/ais-its-nest/analytics';
+import { InjectPool, type Pool } from '@darmawanweb/ais-its-nest/db';
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class SurveillanceEventsRepository implements AlertPersistence {
+  constructor(@InjectPool() private readonly pool: Pool) {}
+
+  /** Called BEFORE the alert is published: the events table records every occurrence. */
+  async onRaised(alert: AlertRaisedV1): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO events (id, time, detector, type, severity, mmsi, related_mmsi, zone_id,
+         dedup_key, method_id, title, message, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT DO NOTHING`, // idempotent: a retried publication re-runs the hook
+      [
+        alert.id,
+        alert.occurredAt,
+        alert.type,
+        alert.type,
+        alert.severity,
+        alert.mmsi,
+        alert.relatedMmsi,
+        alert.zoneId,
+        alert.dedupKey,
+        alert.methodId,
+        alert.title,
+        alert.message,
+        alert.data,
+      ],
+    );
+  }
+
+  async onResolved(resolution: AlertResolution): Promise<void> {
+    await this.pool.query(
+      `UPDATE events SET status = 'resolved', resolved_at = $2
+       WHERE dedup_key = $1 AND status = 'open'`,
+      [resolution.alert.dedupKey, resolution.resolvedAt],
+    );
   }
 }
 ```
@@ -168,13 +295,12 @@ export class DetectorsController {
 ```ts
 // src/events/fleet.projection.ts — a durable consumer writing a projection table
 import { EVENT_TYPES } from '@darmawanweb/ais-its-contracts/events';
-import { InjectPool } from '@darmawanweb/ais-its-nest/db';
+import { InjectPool, type Pool } from '@darmawanweb/ais-its-nest/db';
 import {
   type ConsumerEnvelope,
   EventHandler,
 } from '@darmawanweb/ais-its-nest/nats';
 import { Injectable } from '@nestjs/common';
-import type { Pool } from 'pg';
 
 @Injectable()
 export class FleetProjection {
@@ -240,8 +366,9 @@ await runMigrationsCli({ configSchema });
 
 ```ts
 // src/openapi.ts — "openapi": "node dist/openapi.js" (writes ./openapi.json, opens no connection)
+// CI: "node dist/openapi.js --check" fails when the committed openapi.json is stale.
 import 'reflect-metadata';
-import { exportOpenApi, loadConfig } from '@darmawanweb/ais-its-nest';
+import { exportOpenApi } from '@darmawanweb/ais-its-nest';
 
 import { AppModule } from './app.module.js';
 import { configSchema } from './config.js';
@@ -249,14 +376,16 @@ import { OPENAPI } from './openapi.options.js';
 
 await exportOpenApi({
   appModule: AppModule,
-  config: loadConfig(configSchema),
+  configSchema, // runtime-only variables (S3_ENDPOINT, secrets…) get placeholders
   openapi: OPENAPI,
+  check: process.argv.includes('--check'),
 });
 ```
 
-The detector and the repository are shown in [Writing a detector](#writing-a-detector). The
-`tsconfig.json` needs `module`/`moduleResolution: nodenext`, `experimentalDecorators` and
-`emitDecoratorMetadata`; relative imports end in `.js`.
+The detector is shown in [Writing a detector](#writing-a-detector). Relative imports end in
+`.js`. Never read `process.env` at import time in `app.module.ts` (it is imported before
+`loadConfig()` reads `.env`): take values from the typed configuration (`@InjectConfig()`,
+`APP_CONFIG` in `forRootAsync` factories).
 
 ## Configuration (`.`)
 
@@ -287,6 +416,8 @@ the result is deep-frozen. `AppConfig<typeof schema>` is its type.
 | `OTEL_EXPORTER_OTLP_ENDPOINT`                         | unset                                                                           | tracing only when set                               |
 | `PUBLIC_BASE_URL`                                     | `http://localhost:8000`                                                         |                                                     |
 | `SHUTDOWN_TIMEOUT_MS`                                 | `30000`                                                                         | graceful shutdown deadline                          |
+| `TRUSTED_PROXIES`                                     | `loopback,linklocal,uniquelocal`                                                | proxies whose `X-Forwarded-For` is trusted          |
+| `NATS_DURABLE_PREFIX`                                 | empty                                                                           | prefix of every durable name (shared test servers)  |
 
 Helpers for service variables: `envInteger(min, max?)`, `envBoolean()` (`true/false/1/0/yes/no/on/off`),
 `envList()`, `envUrl(protocols)`. Inject the configuration with `@InjectConfig()`
@@ -320,10 +451,48 @@ validation pipe, problem details filter), then:
   and `@fastify/multipart` (`multipart: true | options`);
 - Swagger UI at `/docs`, JSON at `/openapi.json` (bearer default, `apiKey` and `internalToken`
   schemes, `ProblemDetails` default responses);
-- graceful shutdown hooks, then `listen(HOST, PORT)`.
+- client IP (`request.ip`, audit records, per-IP throttles) from `X-Forwarded-For` only when the
+  connection comes from a `TRUSTED_PROXIES` address (comma list of IPs, CIDRs or `loopback`,
+  `linklocal`, `uniquelocal`; `none` trusts nobody): a direct caller cannot pick its IP;
+- graceful shutdown hooks (with log lines for readiness turning `503`, draining and completion),
+  then `listen(HOST, PORT)`.
 
-`exportOpenApi({ appModule, config, openapi, outFile? })` builds the same document without running
-any lifecycle hook and writes `openapi.json`.
+`exportOpenApi({ appModule, configSchema | config, openapi, outFile?, check? })` builds the same
+document **without running any lifecycle hook** (providers are constructed; neither init nor
+shutdown hooks run, so no connection is opened or closed) and writes `openapi.json`. With
+`configSchema` the configuration is derived by `documentationConfig()`: present variables are
+validated, missing required ones get placeholders of their type. `check: true` compares with the
+committed file and throws `OpenApiDriftError` instead of writing.
+
+### Lists and queries (spec §5)
+
+```ts
+import {
+  ApiCursorResponse, ApiPageResponse, BBoxQueryDto, bboxOf, cursorPage, CursorQueryDto,
+  decodeQueryCursor, pageOffsetOf, PageQueryDto, paginate, resolveQueryTimeRange,
+} from '@darmawanweb/ais-its-nest/http';
+import { IntersectionType } from '@nestjs/swagger';
+
+class ListVesselsQuery extends PageQueryDto { /* + @IsOptional() @IsString() search?: string */ }
+class ListEventsQuery extends IntersectionType(CursorQueryDto, TimeRangeQueryDto, BBoxQueryDto) {}
+
+@Get() @ApiPageResponse(VesselDto)            // { data: VesselDto[], meta: { page, pageSize, total } }
+async list(@Query() query: ListVesselsQuery) {
+  const [rows, total] = await this.vessels.page(pageOffsetOf(query), query.pageSize);
+  return paginate(rows, query, total);
+}
+
+@Get('events') @ApiCursorResponse(EventDto)   // { data: EventDto[], page: { nextCursor, limit } }
+async events(@Query() query: ListEventsQuery) {
+  const { from, to } = resolveQueryTimeRange(query, { defaultDurationMs: 86_400_000 });
+  const after = decodeQueryCursor(query, CursorSchema); // 400 VALIDATION_FAILED for a foreign cursor
+  const rows = await this.events.list({ from, to, bbox: bboxOf(query), after, limit: query.limit + 1 });
+  return cursorPage(rows, query.limit, (row) => ({ time: row.time.toISOString(), id: row.id }));
+}
+```
+
+`page` ≥ 1 (default 1), `pageSize` ≤ 100 (default 20), `limit` ≤ 500 (default 100), cursors are
+opaque base64url JSON, `from`/`to` strict ISO-8601, `bbox=minLon,minLat,maxLon,maxLat` (`@IsBBox()`).
 
 ## Errors (`.`)
 
@@ -369,15 +538,23 @@ timeout; drizzle (`drizzle-orm/node-postgres`, pass `schema` for relational quer
 
 - `withTransaction(pool, async (client) => …, { isolationLevel?, readOnly?, retries? })` — retries
   serialization failures/deadlocks when `retries > 0`.
+- Idempotent handlers (spec §7.1): `withIdempotency(pool, { consumer, eventId }, (client) => …)`
+  records the envelope id in `processed_events` in the same transaction as the handler's writes
+  and returns `{ duplicate: true }` for a redelivery (a failing handler records nothing). Create
+  the table with `processedEventsTableSql()` in a migration, prune with `pruneProcessedEvents()`.
 - PostGIS (all parameters bound, injection-safe): `geography('geom', { subtype: 'Point' })` drizzle
   column, `pointGeography(lon, lat)`, `geoJsonToGeography(geometry)`,
   `geographyAsGeoJson(column, digits?)` (selects a parsed GeoJSON object), `bboxEnvelope(bbox)`,
-  `bboxEnvelopeGeography(bbox)`, `geographyIntersectsBBox(column, bbox)`, `distanceMeters(a, b)`,
-  `withinMeters(a, b, meters)`.
+  `geographyIntersectsBBox(column, bbox)` (compared in lon/lat **geometry** space, so a box's
+  edges are parallels and meridians even for country-wide viewports; index `USING gist
+((geom::geometry))`), `distanceM(a, b)`, `withinM(a, b, meters)` (`distanceMeters` /
+  `withinMeters` are deprecated aliases).
 - Migrator (spec §6): files `migrations/NNNN_snake_case.sql`, applied in order under a PostgreSQL
   advisory lock (concurrent instances wait), recorded in
   `<schema>.schema_migrations(version, name, checksum, applied_at)` with a SHA-256 checksum of the
-  normalized SQL. An applied file that changed stops the boot (`MigrationChecksumMismatchError`).
+  normalized SQL. An applied file that changed stops the boot (`MigrationChecksumMismatchError`),
+  and so does a pending file numbered below the newest applied one (`MigrationOrderError`, e.g. a
+  migration merged from another branch: renumber it, or pass `allowOutOfOrder: true`).
   Each file runs in one transaction; a file whose **first line** is `-- aisits:no-transaction` runs
   statement by statement outside a transaction (continuous aggregates, `CREATE INDEX
 CONCURRENTLY`). Services never run `CREATE EXTENSION`: the infrastructure creates
@@ -390,21 +567,28 @@ CONCURRENTLY`). Services never run `CREATE EXTENSION`: the infrastructure create
 NatsModule.forRoot({ streams?: StreamName[], connectTimeoutMs?, requestTimeoutMs?, drainTimeoutMs? })
 ```
 
-The connection reconnects forever with jittered backoff and drains on shutdown. `streams` lists the
-contracts streams the service **produces** to: they are created or updated to the contracts
-definition at boot (subjects, max age, per-subject limit, dedup window), never deleted. Consumers
-ensure the stream they read and `DLQ`.
+The connection reconnects forever with jittered backoff and drains on shutdown.
+
+**Stream ownership (spec §7.2).** `streams` lists the contracts streams the service **produces**
+to: they are created when missing and **widened** to the contracts definition (new subjects,
+longer retention, larger per-subject limit or dedup window), never narrowed — a narrowing change
+(services pin different contracts versions; NATS purges at once on a lowered limit) is only logged
+for an operator. Consumers never change a stream: a missing source stream (or `DLQ`) is created
+so services can boot in any order, an existing one is left as it is.
 
 ### Publishing
 
 ```ts
 constructor(private readonly events: EventPublisher) {}
 
-await this.events.publish(subjects.fleetVessel(vessel.id), EVENT_TYPES.FLEET_VESSEL_UPSERTED, snapshot);
-const { envelope, ack } = await this.events.publishEvent(EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED, state); // subject derived
-await this.events.publishMany([{ type, data, subject?, options? }, …]);
+const { envelope, ack } = await this.events.publishEvent(EVENT_TYPES.FLEET_VESSEL_UPSERTED, snapshot); // subject derived
+await this.events.publishMany([{ type, data, subject?, options? }, …]); // acks in input order
 // options: { msgId? (default envelope id), id?, time?, entityKey?, expect?, timeoutMs? }
 ```
+
+The subject always comes from the event (contracts `subjectForEvent`); an explicit subject that
+differs is refused with `EventSubjectMismatchError` (the deprecated `publish(subject, type, data)`
+checks it too).
 
 The envelope gets `source = SERVICE_NAME`, a UUID v7 id, the time and `traceparent`; the payload is
 validated against the contracts schema (`InvalidEventError`); headers: `Nats-Msg-Id`,
@@ -414,10 +598,11 @@ validated against the contracts schema (`InvalidEventError`); headers: `Nats-Msg
 
 Decorate a method of a singleton provider; handlers are discovered when the application
 bootstraps, one per durable consumer. The consumer (a contracts `CONSUMERS` key or an explicit
-`DurableConsumerDefinition`) is created or updated idempotently (filter, ack wait, max deliver).
+`DurableConsumerDefinition`) is created, or its own settings updated, idempotently (filter, ack
+wait, max deliver, max ack pending).
 
 ```ts
-@EventHandler({ consumer: 'emission-positions', concurrency: 8, orderBySubject: true, maxDeliver?, ackWaitMs?, backoffMs? })
+@EventHandler({ consumer: 'emission-positions', concurrency: 8, orderBySubject: true, maxDeliver?, ackWaitMs?, backoffMs?, maxAckPending?, exclusive? })
 async onPosition(event: ConsumerEnvelope<'emission-positions'>, context: EventContext): Promise<void> { … }
 // context: { subject, stream, consumer, streamSequence, deliveryCount, headers, storedAt, signal, working() }
 ```
@@ -431,16 +616,30 @@ async onPosition(event: ConsumerEnvelope<'emission-positions'>, context: EventCo
 | `RetryableError` or any other error, `deliveryCount < maxDeliver` | `nak` with backoff (`retryAfterMs`, `backoffMs`, else 1 s × 2ⁿ ≤ 60 s)     | `nak`                                   |
 | any retryable error at `deliveryCount = maxDeliver` (default 10)  | copy to `dlq.<stream>.<consumer>` with `Ais-Its-Dlq-*` headers, then `ack` | `dead_letter`                           |
 
-Long handlers are kept alive with `working()` heartbeats (every `ackWaitMs / 2`). With
-`concurrency > 1`, messages of the same subject (= same vessel) still run in order. Shutdown stops
-pulling, waits for in-flight handlers up to `drainTimeoutMs` (then aborts `context.signal`) and naks
-what was not started. Handlers must be idempotent (redeliveries happen).
+- **No redelivery while waiting.** Every received message is heartbeated (`working()` every
+  `ackWaitMs / 3`) from its arrival until it is settled — while it waits for its subject's turn or
+  a handler slot and while it runs — and the client buffer is bounded by `maxAckPending`.
+- **Order.** With `concurrency > 1`, messages of the same subject (= same vessel) still run one
+  after the other in stream order. A message that is **nak'd** is redelivered after its backoff,
+  so later messages of its subject may be handled before the retry: handlers that need strict
+  per-entity order compare versions/times (`previous`, `updatedAt`) or fail with
+  `NonRetryableError`.
+- **Recovery.** The consume loop's status is watched: a deleted or missing consumer (or stream) is
+  recreated and consumption resumes; a consumer without messages or server heartbeats for 60 s,
+  or failing to recover, turns readiness `nats` down (`aisits_events_consumer_recoveries_total`).
+- **Single active instance.** `exclusive: true | { pinnedTtlMs }` (NATS ≥ 2.11 priority group
+  `pinned_client`) delivers to one replica; the others stand by and take over when it stops
+  pulling.
+- `NATS_DURABLE_PREFIX` prefixes every durable name (test suites sharing one server).
+- Shutdown stops pulling, waits for in-flight handlers up to `drainTimeoutMs` (then aborts
+  `context.signal`) and naks what was not started. Handlers must be idempotent (redeliveries
+  happen; see `withIdempotency`).
 
 ### Ordered (ephemeral) consumers — fan-out, every instance gets every message
 
 ```ts
-@OrderedEventHandler({ consumer: 'notification-safety', deliver: 'last_per_subject' })
-onSafetyState(event: AnyEventEnvelope, context: EventContext): void { … }
+@OrderedEventHandler({ consumer: 'notification-safety', deliver: 'last_per_subject' }) // contracts ORDERED_CONSUMERS key
+onSafetyState(event: ConsumerEnvelope<'notification-safety'>, context: EventContext): void { … }
 
 const sub = await this.ordered.start({          // OrderedConsumers, at runtime
   name: 'zones-projection', stream: 'GEO', filterSubjects: [SUBJECT_FILTERS.GEO_ZONE],
@@ -460,6 +659,37 @@ every entity, then live changes. No acks; handler errors are logged and counted 
 `StreamReplayer.replay({ stream, filterSubjects, from, to?, eventTypes, handler, signal? })` reads a
 time range with an ephemeral consumer up to the end of the stream at start (recomputations).
 
+### Core NATS subscriptions
+
+```ts
+@CoreSubscriptionHandler({ subscription: 'telemetry-mqtt', concurrency?: 16, maxPending?: 1000, queue? })
+async onDeviceMessage(message: Msg): Promise<void> { const json = message.json<unknown>(); … }
+```
+
+Contracts `CORE_SUBSCRIPTIONS` (e.g. `aisits.telemetry.*` from the MQTT gateway): subscribed at
+bootstrap in the queue group `SERVICE_NAME` (replicas share messages; `queue: false` for fan-out),
+handled with bounded concurrency inside the log context; failures are logged and counted
+(`aisits_core_messages_total{subscription,outcome}`), overflow beyond `maxPending` is dropped and
+counted; drained on shutdown. Core NATS has no redelivery.
+
+### Transactional outbox
+
+```ts
+// migration: outboxTableSql() — app.module: OutboxModule.forRoot({ pollIntervalMs?, batchSize?, retentionMs? })
+await withTransaction(this.pool, async (client) => {
+  await this.vessels.update(client, id, changes);
+  await enqueueEvent(client, EVENT_TYPES.FLEET_VESSEL_UPSERTED, snapshot); // validated now
+});
+this.outbox.notify(); // OutboxRelay: publish now instead of at the next poll
+```
+
+`OutboxRelay` publishes committed rows (never rolled-back ones) oldest first, one instance at a
+time (advisory lock), with the row id as envelope id (`Nats-Msg-Id`), and stops at the first
+failure so per-entity order holds (`FLEET`/`GEO` keep the latest message per subject). A row
+whose payload no longer validates is marked `failed_at` and skipped. Metrics:
+`aisits_outbox_relayed_total{type,outcome}`, `aisits_outbox_pending`,
+`aisits_outbox_oldest_pending_seconds`.
+
 ## Valkey (`./redis`)
 
 `RedisModule.forRoot({ keyPrefix?, connectTimeoutMs? })` — lazy ioredis client connected on init
@@ -478,7 +708,19 @@ if (!result.allowed)
 
 Both limiters are single atomic Lua scripts. Fixed window counts every attempt; the sliding window
 log (`SlidingWindowRateLimiter`) records only allowed requests and never exceeds `limit` in any
-window. `peek(key)` reads without counting, `reset(key)` forgets.
+window. `peek(key)` reads without counting, `refund(key, cost?)` returns units, `reset(key)`
+forgets.
+
+**Throttling failed attempts** (login, MFA): never `peek` and then `consume` on failure — that is
+check-then-act, and concurrent attempts all pass the `peek`. Reserve first with `guardAttempt`:
+
+```ts
+const user = await guardAttempt(logins, email, () =>
+  this.verifyPassword(email, password),
+);
+// reserves 1 unit atomically BEFORE the check (429 RateLimitedError when none is left), keeps it
+// when the check throws (a failure), refunds it when the check resolves ({ onSuccess: 'refund' | 'reset' | 'keep' })
+```
 
 ## Authentication and authorization (`./auth`)
 
@@ -486,7 +728,12 @@ window. `peek(key)` reads without counting, `reset(key)` forgets.
 AuthModule.forRoot({ apiKeys? = true, keyResolver?, apiKeyIntrospector?, apiKeyCache?, imports? })
 ```
 
-Registers a **global default-deny** guard (HTTP): every route needs a principal unless `@Public()`.
+Registers a **global default-deny** guard: every route needs a principal unless `@Public()`.
+Handler metadata wins over controller metadata: `@RequirePermissions()` / `@AllowApiKey()` on a
+method protect it even under a controller-level `@Public()`, and a controller-level
+`@AllowApiKey()` does not open methods that declare their own `@RequirePermissions()` to API keys.
+Non-HTTP handlers (WebSocket, RPC) are denied unless marked `@Public()` (authenticate their
+connection with `AccessTokenVerifier` instead).
 
 | Decorator                             | Effect                                                                                     |
 | ------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -497,8 +744,12 @@ Registers a **global default-deny** guard (HTTP): every route needs a principal 
 | `@CurrentPrincipal()`                 | parameter decorator: the `Principal` (`UserPrincipal` \| `ApiKeyPrincipal`)                |
 
 - Access tokens: EdDSA, `iss`/`aud` from config, 30 s clock tolerance, contracts claim schema;
-  keys from the remote JWKS (`AUTH_JWKS_URL`, cached 10 min, 30 s refetch cooldown) unless
-  `keyResolver` is given (the auth service plugs its local keys, tests a test issuer).
+  keys from the remote JWKS (`AUTH_JWKS_URL`) unless `keyResolver` is given (the auth service plugs
+  its local keys, tests a test issuer). The JWKS is refreshed in the background after 10 min and
+  **stale-if-error**: while auth is unreachable the cached keys keep verifying for up to 1 h;
+  an unknown `kid` refetches at most every 30 s; redirects are not followed. Failures to fetch
+  keys answer `503 SERVICE_UNAVAILABLE` (with `Retry-After`), never `401`, so clients do not log
+  users out during an auth deploy.
 - API keys only on `@AllowApiKey` routes: `POST {AUTH_INTERNAL_URL}/internal/api-keys/introspect`
   with `X-Internal-Token`, cached 60 s (active) / 10 s (unknown, revoked); when auth cannot be
   reached the request is **denied** with `503 SERVICE_UNAVAILABLE`.
@@ -515,7 +766,8 @@ Registers a **global default-deny** guard (HTTP): every route needs a principal 
 
 - **Audit** (`./audit`): `AuditService.record({ action: 'vessel.update', targetType, targetId, meta, orgId? }, principal?, request?)`
   publishes `audit.recorded.v1` to `audit.v1.<SERVICE_NAME>`; best effort (resolves `false` and
-  counts `aisits_audit_failures_total` instead of throwing). Needs `NatsModule`.
+  counts `aisits_audit_failures_total` instead of throwing). `AuditModule` is global: import it
+  once in `AppModule`. Needs `NatsModule`.
 - **Health** (`./health`, always on): `GET /health/live`, `GET /health/ready` aggregating the
   indicators registered by `DatabaseModule`, `NatsModule`, `RedisModule` and any provider
   decorated with `@ReadinessCheck()` implementing `{ healthKey, check(health) }`.
@@ -524,16 +776,18 @@ Registers a **global default-deny** guard (HTTP): every route needs a principal 
   (route template), event and detector metrics; add your own with
   `metrics.counter({ name: 'ais_messages_total', help, labelNames })` (prefix added, get-or-create),
   `gauge()`, `histogram()`.
-- **Tracing** (`./telemetry`): `startTelemetry({ serviceName, serviceVersion })` — OTLP/HTTP traces
-  with http, Fastify, pg, ioredis and fetch instrumentation, a no-op without
-  `OTEL_EXPORTER_OTLP_ENDPOINT`; call it before importing the app. Trace context travels in NATS
+- **Tracing** (`./telemetry`): `startTelemetry({ serviceName, serviceVersion, instrumentations? })`
+  — OTLP/HTTP traces with Fastify plus `SUPPORTED_INSTRUMENTATIONS` (`http`, `undici`, `pg`,
+  `ioredis`; the kit depends on exactly these, `OTEL_NODE_ENABLED_INSTRUMENTATIONS` narrows them),
+  a no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`; call it before importing the app. Trace context travels in NATS
   headers and the envelope (`injectTraceContext`, `extractTraceContext`, `currentTraceparent`,
   `withSpan`).
 - **Internal HTTP** (`./internal-http`): `InternalHttpClient.forService(config, baseUrl)` sends
   `X-Internal-Token`, JSON, `traceparent`; per-attempt timeout (5 s), limited jittered retries
   (2) for idempotent requests (`GET/HEAD/PUT/DELETE`, or `idempotent: true`) on network errors,
   timeouts and 502/503/504; failures are `InternalHttpError` with the remote problem details
-  (`code`, `status`, `isTransient`).
+  (`code`, `status`, `isTransient`). Redirects are never followed (the internal token and the
+  body stay with the configured host): a 3xx is an `InternalHttpError`.
 
 ## Detector SDK (`./analytics`)
 
@@ -543,6 +797,7 @@ implements `Detector` and is decorated with `@RegisterDetector()`. `DetectorRunn
 ```ts
 DetectorRunnerModule.forRoot({
   positions: 'safety-positions',        // durable AIS_POSITION consumer (contracts key or definition)
+  exclusive?: true,                     // single active instance; other replicas stand by (failover)
   concurrency?: 8,                      // vessels in parallel; one vessel's positions stay ordered
   zones?: true, fleet?: true,           // GEO / FLEET snapshots (ordered, last_per_subject)
   distanceModel?: 'wgs84',              // or 'sphere' (Turf.js / legacy parity)
@@ -552,23 +807,43 @@ DetectorRunnerModule.forRoot({
   persistence?: { useClass: MyEventsRepository },   // AlertPersistence
   env?, enabled?, callTimeoutMs?: 10_000, catchUpTimeoutMs?: 60_000, imports?,
 })
+DetectorRunnerModule.forRootAsync({       // options from the typed configuration
+  inject: [APP_CONFIG],
+  useFactory: (config: Config) => ({ positions: 'safety-positions', concurrency: config.SAFETY_CONCURRENCY }),
+  persistence?: { useClass: MyEventsRepository },
+})
 ```
+
+`DETECTORS` and `<ID>_*` are read from the `DETECTOR_ENV` provider (`options.env ?? process.env`,
+read when the module is built — after `loadConfig()` loaded `.env`); tests override it:
+`buildTestApp(AppModule, { config, overrides: [{ provide: DETECTOR_ENV, useValue: { DETECTORS: 'geofence' } }] })`.
 
 Boot sequence: module init discovers and registers the detectors (unknown `DETECTORS` entries or
 invalid `<ID>_*` variables stop the boot, listing every problem) → application bootstrap restores
 open alerts (`persistence.loadOpen`) and mirrored vessel states, ensures `ALERTS`, loads the `GEO`
 and `FLEET` snapshots and **waits until they are complete**, then starts the durable position
-consumer and the ticks. Each instance holds every zone and vessel (ordered consumers), while
-positions are shared between instances through the durable consumer; split work between
-deployments with `DETECTORS`. Durable projections into tables (`safety-zones`,
-`surveillance-fleet`, …) remain ordinary `@EventHandler` consumers.
+consumer and the ticks. Each instance holds every zone and vessel (ordered consumers). Detector
+state (vessel states, tracks, neighbours, open alerts) lives in memory, so positions go to **one
+active instance** (`exclusive`, default `true`): further replicas are hot standbys that take over
+when it stops, not extra throughput. Scale out by splitting detectors over deployments with
+`DETECTORS` — each subset consumes through its own durable (`<positions>-<sorted ids>`), so
+differently configured deployments never split the feed. Durable projections into tables
+(`safety-zones`, `surveillance-fleet`, …) remain ordinary `@EventHandler` consumers.
 
 For every position the runner first updates `VesselStateStore` and `PairSearch` (positions not
-newer than the vessel's state are dropped: duplicates and out-of-order redeliveries), then calls
-every enabled detector's `onPosition` concurrently. A detector that throws or exceeds
-`callTimeoutMs` is logged and counted, never blocks the others, and never makes the message
-redeliver. Zone and vessel changes reach `onZoneChanged` / `onVesselChanged` after the index was
-updated (`initial: true` during the startup snapshot).
+newer than the vessel's state are dropped: duplicates and out-of-order redeliveries; states
+restored from the Valkey mirror only seed the store, so the backlog after a restart still reaches
+the detectors), then calls every enabled detector's `onPosition` concurrently. A detector that
+throws or exceeds `callTimeoutMs` is logged and counted and never makes the message redeliver; a
+late call gets its `call.signal` aborted and, until it settles, that detector's next calls for the
+same vessel are skipped (`aisits_detector_skipped_total`), so calls for one vessel never overlap.
+The message is acknowledged once every detector settled, so a slow detector slows the feed: give
+slow detectors their own deployment (`DETECTORS`). Ticks run on timers between positions; both
+paths go through the same `AlertEmitter`, which serializes all operations of a `dedupKey`. Zone
+and vessel changes reach `onZoneChanged` / `onVesselChanged` after the index was updated
+(`initial: true` during the startup snapshot). Neighbour queries and pruning use **event time**
+(the newest indexed position), never the wall clock, so a backlog after an outage still finds its
+pairs. The vessel state mirror is namespaced per service (`aisits:<SERVICE_NAME>:vessel-state:`).
 
 ### Writing a detector
 
@@ -602,7 +877,8 @@ type GeofenceConfig = z.output<typeof geofenceConfig>;
 export class GeofenceDetector implements Detector<GeofenceConfig> {
   readonly id = 'geofence'; // env prefix GEOFENCE_, metrics label, DETECTORS entry
   readonly domain = 'surveillance'; // must be the registry domain of the alert types it raises
-  readonly methodIds = ['geo.geofence_enter'];
+  readonly methodIds = ['geo.geofence_enter']; // methodology catalog ids (unknown ids are warned about)
+  readonly alertTypes = ['geofence'] as const; // checked against the registry at boot and on raise
   readonly configSchema = geofenceConfig;
   // readonly tickIntervalMs = 60_000;              // + onTick(ctx, now) for time-based rules
 
@@ -633,11 +909,9 @@ export class GeofenceDetector implements Detector<GeofenceConfig> {
         // methodId defaults to methodIds[0]
       });
     }
+    // `open()` only lists this detector's occurrences.
     for (const open of context.alerts.open({ mmsi: position.mmsi })) {
-      if (
-        open.type === 'geofence' &&
-        !inside.some((zone) => zone.id === open.zoneId)
-      ) {
+      if (!inside.some((zone) => zone.id === open.zoneId)) {
         await context.alerts.resolve(open.dedupKey, {
           at: position.time,
           reason: 'left the zone',
@@ -660,7 +934,7 @@ document its `<ID>_*` variables in `.env.example`, and test it with the harness 
 | `pairs`   | `PairSearch<VesselState>` | `neighbours(origin, { radiusM, maxAgeMs?, filter?, limit? })` nearest first, `pairs({ radiusM })`                                                                             |
 | `zones`   | `ZoneIndex`               | `zonesAt(point, { kinds?, useBuffer?, orgId? })`, `distance(zoneId, point)`, `near(point, radiusM, q)`, `nearest(point, { kinds, maxDistanceM? })`, `contains(zoneId, point)` |
 | `fleet`   | `FleetDirectory`          | `byMmsi(mmsi)`, `byId(id)`, `orgOf(mmsi)` (`undefined` = unregistered vessel)                                                                                                 |
-| `alerts`  | `DetectorAlerts`          | `raise(signal)`, `resolve(dedupKey, { at?, reason?, data? })`, `get()`, `isOpen()`, `open({ mmsi? })`                                                                         |
+| `alerts`  | `DetectorAlerts`          | `raise(signal)`, `resolve(dedupKey, { at?, reason?, data? })`, `get()`, `isOpen()`, `open({ mmsi? })` — scoped to THIS detector's occurrences                                 |
 | `logger`  | `DetectorLogger`          | `log/warn/error/debug`                                                                                                                                                        |
 | `now()`   | `() => Date`              | the SDK clock (fixed in tests)                                                                                                                                                |
 
@@ -669,14 +943,24 @@ maxAgeMs: 45 * 60_000 })`: `push(mmsi, point)`, `points(mmsi, { since })`, `tail
 `last(mmsi)`, `prune(now)`). Distances are geodesic metres: `'wgs84'` (Vincenty) matches PostGIS
 `ST_Distance(geography)` within 1 cm in the test suite; `'sphere'` matches `@turf/distance` /
 `@turf/nearest-point-on-line` 7 exactly, which the legacy EWS rule used. Lines and polygon edges are
-great-circle arcs; containment uses the even–odd rule; geometries must not cross the antimeridian.
-Helpers: `geodesicDistanceM`, `haversineMeters`, `vincentyMeters`, `distanceToArc`,
-`nearestPointOnArc`, `initialBearingDeg`, `destinationPoint`, `searchBox`.
+great-circle arcs, for containment too (long polygon edges are densified at compile time), so
+`contains()` and `distance()` agree with each other and with PostGIS `ST_Covers(geography)`;
+geometries must not cross the antimeridian. Zone `properties` are typed per kind with the
+contracts `zoneProperties(zone)` (e.g. `depthM` of `shallow_water`). Helpers: `geodesicDistanceM`,
+`haversineM`, `vincentyM`, `distanceToArc`, `nearestPointOnArc`, `initialBearingDeg`,
+`destinationPoint`, `searchBox`.
 
 ### Alerts (`AlertEmitter`)
 
-One state machine per `dedupKey`; `AlertRaisedV1` payloads are validated (registry domain,
-`methodId` format) and published to `alert.v1.<type>.<mmsi>` with the envelope id = alert id.
+One state machine per `dedupKey`; every operation of a key (raise, resolve, publication retry)
+runs to completion before the next starts, so the two vessels of a pair, a tick and a position, or
+a resolve during a raise never open two occurrences or lose a resolution. `AlertRaisedV1`
+payloads are validated (registry domain, `methodId` format) and published to
+`alert.v1.<type>.<mmsi>` with the envelope id = alert id. The serialization is in-process,
+which is enough with the single active instance of the runner; where several writers may exist,
+also enforce one open occurrence per `dedup_key` in the database (a partial unique index
+`(dedup_key) WHERE status = 'open'` on a plain table — a hypertable's unique indexes must include
+its time column, so keep open occurrences in a small companion table there).
 
 | Signal for a key                                                                                                    | Outcome        | Published              | Persistence hook                                |
 | ------------------------------------------------------------------------------------------------------------------- | -------------- | ---------------------- | ----------------------------------------------- |
@@ -699,11 +983,13 @@ neighbour entries.
 
 `aisits_detector_evaluations_total{detector}`, `aisits_detector_duration_seconds{detector}`
 (`onPosition` and `onTick` calls), `aisits_detector_alerts_total{detector,severity}`,
-`aisits_detector_errors_total{detector,hook}`, `aisits_detector_positions_total{outcome}`.
+`aisits_detector_errors_total{detector,hook}`, `aisits_detector_skipped_total{detector,hook}`,
+`aisits_detector_positions_total{outcome}`.
 
 ### Testing a detector without NATS (`DetectorTestHarness`)
 
 ```ts
+// src/detectors/geofence.detector.spec.ts
 import { DetectorTestHarness } from '@darmawanweb/ais-its-nest/analytics';
 import { describe, expect, it } from 'vitest';
 
@@ -732,7 +1018,7 @@ describe('GeofenceDetector', () => {
         ],
       },
     });
-    await harness.position({ mmsi: 525005223, lat: 1.05, lon: 104.05 }); // defaults: time = clock, previous = last fed
+    await harness.position({ mmsi: 525005223, lat: 1.05, lon: 104.05 }); // defaults: time = clock (or the vessel's last + stepMs), previous = last fed
     expect(harness.alerts).toEqual([
       expect.objectContaining({
         type: 'geofence',
@@ -749,9 +1035,11 @@ describe('GeofenceDetector', () => {
 });
 ```
 
-The harness also offers `track(points)`, `vessel(snapshot)`, `removeZone(id)`, `removeVessel(v)`,
-`tick(now?)`, `setTime()`, `updates`, `describe()`, `metrics.render()` and the shared state in
-`services`; `makeTestZone()` and `makeTestVesselSnapshot()` build valid contracts payloads.
+The harness also offers `track(points)` (positions without `time` are spaced by `stepMs`, default
+10 s, so a synthetic track is never reduced to its first point), `vessel(snapshot)`,
+`removeZone(id)`, `removeVessel(v)`, `tick(now?)`, `setTime()`, `updates`, `describe()`,
+`metricsText()` and the shared state in `services`; `makeTestZone()` and
+`makeTestVesselSnapshot()` build valid contracts payloads.
 
 ## Testing guide (`./testing`)
 
@@ -785,13 +1073,29 @@ export default defineConfig({
 | Helper                                                                                              | What                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `startTestInfra({ postgres?, nats?, redis?, s3?, smtp? })`                                          | containers (`TEST_IMAGES`: `timescale/timescaledb-ha:pg17`, `nats:2.11-alpine`, `valkey/valkey:8-alpine`, `rustfs/rustfs:latest`, `axllent/mailpit:latest`), returns exactly the requested endpoints + `stop()`        |
+| `testInfraGlobalSetup(options)`, `testInfra(...names)`, `uniqueName(prefix)`                        | one set of containers for the whole run (vitest `globalSetup`), endpoints in every test file, unique schema/durable names                                                                                              |
+| `reapOrphanedTestContainers()`                                                                      | removes labelled test containers of crashed runs (called by `startTestInfra` when Ryuk is disabled)                                                                                                                    |
 | `provisionServiceSchema(adminUrl, schema)`                                                          | replicates `infra/postgres/bootstrap.sql` for one schema (extensions in `public`, LOGIN role `<schema>_svc` with password = role name, schema owned by it, `USAGE` on `public`) and returns the service `DATABASE_URL` |
 | `createTestJwtIssuer({ issuer?, audience? })`                                                       | Ed25519 issuer: `sign({ roles, orgId, userId?, expiresInSeconds? })`, `issue()` (token + expected principal), `signRaw()`, `keyResolver` (for `AuthModule`), `serveJwks()` (real JWKS URL)                             |
 | `startFakeApiKeyIntrospection({ internalToken })`, `FakeApiKeyIntrospector`, `generateTestApiKey()` | the auth service's introspection endpoint (HTTP) or in-memory                                                                                                                                                          |
-| `createTestConfig(schema, env)`                                                                     | validated config from `env` only (`NODE_ENV=test`, silent logs, no migrations unless set)                                                                                                                              |
+| `createTestConfig(schema, env)`                                                                     | validated config from `env` only (`NODE_ENV=test`, silent logs, no migrations unless set; the schema's `SERVICE_NAME` default is kept)                                                                                 |
 | `buildTestApp(appModule, { config, overrides?, logging?, cookies?, multipart?, configure? })`       | the real platform composition, initialized (hooks run), use `app.inject()`; `app.close()`                                                                                                                              |
 | `makeTestEnvelope(type, data, options?)`                                                            | a valid contracts envelope                                                                                                                                                                                             |
 | `waitFor(predicate, { timeoutMs?, intervalMs? })`                                                   | polls until truthy and returns the value                                                                                                                                                                               |
+
+Share one set of containers between test files: `vitest.int.config.ts` gets
+`globalSetup: ['test/global-setup.ts']` with
+
+```ts
+// test/global-setup.ts
+import { testInfraGlobalSetup } from '@darmawanweb/ais-its-nest/testing';
+
+export const setup = testInfraGlobalSetup({ postgres: true, nats: true });
+```
+
+and each file reads the endpoints with `testInfra('postgres', 'nats')`, provisions its own schema
+and sets `NATS_DURABLE_PREFIX: uniqueName('t')` so that parallel files never share durable
+consumers. A single file can also start its own containers:
 
 ```ts
 // test/geofence.int.test.ts
@@ -909,7 +1213,9 @@ pnpm build          # tsc -p tsconfig.build.json → dist/
 pnpm test           # unit (src/**/*.spec.ts) + integration (test/**/*.int.test.ts, starts containers)
 pnpm test:unit      # no Docker needed
 pnpm lint && pnpm typecheck
-pnpm check:package  # smoke test of dist through the exports map, publint, attw (ESM only)
+pnpm check:package  # smoke test of dist through the exports map, publint, attw (ESM only), API report
+pnpm api:report     # regenerate etc/api-report.json after a reviewed API change
+pnpm check:readme   # rebuild and test the README's minimal service from the packed tarballs (Docker)
 ```
 
 Releases follow the repository's Keep a Changelog file ([CHANGELOG.md](CHANGELOG.md)).

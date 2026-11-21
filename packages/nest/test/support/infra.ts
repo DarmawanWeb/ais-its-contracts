@@ -1,13 +1,26 @@
-import { randomBytes } from 'node:crypto';
+import {
+  testInfra as sharedTestInfra,
+  uniqueName,
+} from '../../src/testing/index.js';
 
-import { inject } from 'vitest';
+export { uniqueName };
 
 /** Endpoints of the shared integration containers (see `global-setup.ts`). */
-export function testInfra(): ReturnType<typeof inject<'infra'>> {
-  return inject('infra');
-}
-
-/** A unique lowercase identifier for schemas, durable names and subjects. */
-export function uniqueName(prefix: string): string {
-  return `${prefix}_${randomBytes(4).toString('hex')}`;
+export function testInfra(): {
+  readonly postgresAdminUrl: string;
+  readonly natsUrl: string;
+  readonly natsMonitorUrl: string;
+  readonly redisUrl: string;
+} {
+  const { postgres, nats, redis } = sharedTestInfra(
+    'postgres',
+    'nats',
+    'redis',
+  );
+  return {
+    postgresAdminUrl: postgres.adminUrl,
+    natsUrl: nats.url,
+    natsMonitorUrl: nats.monitorUrl,
+    redisUrl: redis.url,
+  };
 }

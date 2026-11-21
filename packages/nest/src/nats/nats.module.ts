@@ -8,6 +8,10 @@ import {
 import { DiscoveryModule } from '@nestjs/core';
 
 import { NatsConsumerRuntime } from './consumer-runtime.js';
+import {
+  CoreSubscriptionMetrics,
+  CoreSubscriptions,
+} from './core-subscriptions.js';
 import { EventConsumers } from './event-consumers.js';
 import { EventPublisher } from './event-publisher.js';
 import { NatsClient } from './nats-client.js';
@@ -58,6 +62,8 @@ export class NatsModule {
         OrderedConsumers,
         StreamReplayer,
         EventConsumers,
+        CoreSubscriptionMetrics,
+        CoreSubscriptions,
         ProducerStreams,
         NatsHealthIndicator,
       ],
@@ -70,6 +76,7 @@ export class NatsModule {
         OrderedConsumers,
         StreamReplayer,
         EventConsumers,
+        CoreSubscriptions,
       ],
     };
   }

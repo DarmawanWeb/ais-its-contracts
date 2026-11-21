@@ -40,7 +40,10 @@ export class NatsHealthIndicator implements ReadinessIndicator {
         if (stalled.length > 0) {
           throw new Error(
             `Stalled consumer(s): ${stalled
-              .map((h) => `${h.name}${h.lastError === undefined ? '' : ` (${h.lastError})`}`)
+              .map(
+                (h) =>
+                  `${h.name}${h.lastError === undefined ? '' : ` (${h.lastError})`}`,
+              )
               .join(', ')}`,
           );
         }

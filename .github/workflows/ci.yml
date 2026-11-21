@@ -62,5 +62,26 @@ jobs:
       - name: Generated artifacts are up to date
         run: pnpm schemas:check
 
-      - name: Package checks (dist smoke test, publint, are-the-types-wrong)
+      # The methodology catalog is owned by the central repository (spec §17):
+      # check that the data modules shipped in contracts match its docs/references.
+      - name: Checkout the central methodology catalog
+        id: catalog
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@v5
+        with:
+          repository: DarmawanWeb/ais-its-platform
+          path: .platform
+          sparse-checkout: docs/references
+          token: ${{ secrets.PLATFORM_READ_TOKEN || github.token }}
+
+      - name: Methodology catalog is in sync
+        if: steps.catalog.outcome == 'success'
+        run: pnpm references:check --from "$GITHUB_WORKSPACE/.platform/docs/references"
+
+      - name: Package checks (dist smoke test, publint, are-the-types-wrong, API report)
         run: pnpm check:package
+
+      # The README's minimal service, extracted into a pnpm project with the packed tarballs:
+      # install commands, typecheck, build, openapi export and its tests (Docker).
+      - name: README example works as documented
+        run: pnpm --filter @darmawanweb/ais-its-nest run check:readme

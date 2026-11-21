@@ -90,8 +90,7 @@ export async function buildTestApp(
   const app = moduleRef.createNestApplication<NestFastifyApplication>(
     createFastifyAdapter({
       bodyLimitBytes: options.adapter?.bodyLimitBytes,
-      trustProxy:
-        options.adapter?.trustProxy ?? options.config.TRUSTED_PROXIES,
+      trustProxy: options.adapter?.trustProxy ?? options.config.TRUSTED_PROXIES,
     }),
     // eslint-disable-next-line @typescript-eslint/no-unsafe-class-instance-assignment -- Nest declares its options as classes; plain objects are the documented usage
     { bufferLogs: true },
@@ -148,12 +147,12 @@ export function createTestConfig<
   env: Readonly<Record<string, string | undefined>> = {},
 ): Readonly<z.output<Schema>> {
   const merged: Record<string, string | undefined> = { ...TEST_ENV, ...env };
-  if (merged['SERVICE_NAME'] === undefined) {
+  if (merged.SERVICE_NAME === undefined) {
     const probe = schema.safeParse(merged);
     const lacksName =
       !probe.success &&
       probe.error.issues.some((issue) => issue.path[0] === 'SERVICE_NAME');
-    if (lacksName) merged['SERVICE_NAME'] = TEST_SERVICE_NAME;
+    if (lacksName) merged.SERVICE_NAME = TEST_SERVICE_NAME;
   }
   return loadConfig(schema, { env: merged });
 }

@@ -11,6 +11,17 @@ export {
 } from './database-lifecycle.js';
 export { DatabaseHealthIndicator } from './database.health.js';
 export { DatabaseModule } from './database.module.js';
+export {
+  type IdempotencyKey,
+  type IdempotencyOptions,
+  type IdempotentResult,
+  InvalidTableNameError,
+  PROCESSED_EVENTS_TABLE,
+  processedEventsTableSql,
+  pruneProcessedEvents,
+  quoteTableName,
+  withIdempotency,
+} from './idempotency.js';
 export { type MigrationsCliOptions, runMigrationsCli } from './migrator/cli.js';
 export {
   MIGRATION_FILE_PATTERN,
@@ -44,6 +55,8 @@ export {
 export {
   bboxEnvelope,
   bboxEnvelopeGeography,
+  distanceM,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- deprecated alias kept for compatibility
   distanceMeters,
   geoJsonToGeography,
   type GeoJsonGeometry,
@@ -54,6 +67,8 @@ export {
   geographyIntersectsBBox,
   type GeographySubtype,
   pointGeography,
+  withinM,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- deprecated alias kept for compatibility
   withinMeters,
 } from './postgis.js';
 export {
@@ -69,3 +84,9 @@ export {
   type TransactionOptions,
   withTransaction,
 } from './transaction.js';
+/**
+ * The `pg` types of `@InjectPool()` and `withTransaction()` (re-exported so
+ * that services need no direct `pg` / `@types/pg` dependency under pnpm's
+ * strict layout).
+ */
+export type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';

@@ -9,6 +9,8 @@ const EXPECTED = {
   '': [
     'bootstrapService',
     'exportOpenApi',
+    'OpenApiDriftError',
+    'documentationConfig',
     'defineConfig',
     'loadConfig',
     'ConfigModule',
@@ -21,6 +23,10 @@ const EXPECTED = {
     'configureApp',
     'buildOpenApiDocument',
     'GLOBAL_PREFIX',
+    'PageQueryDto',
+    'CursorQueryDto',
+    'ApiPageResponse',
+    'cursorPage',
   ],
   '/db': [
     'DatabaseModule',
@@ -29,7 +35,9 @@ const EXPECTED = {
     'runMigrations',
     'runMigrationsCli',
     'withTransaction',
+    'withIdempotency',
     'pointGeography',
+    'distanceM',
   ],
   '/nats': [
     'NatsModule',
@@ -40,12 +48,16 @@ const EXPECTED = {
     'RetryableError',
     'NonRetryableError',
     'StreamReplayer',
+    'CoreSubscriptionHandler',
+    'OutboxModule',
+    'enqueueEvent',
   ],
   '/redis': [
     'RedisModule',
     'InjectRedis',
     'FixedWindowRateLimiter',
     'SlidingWindowRateLimiter',
+    'guardAttempt',
   ],
   '/auth': [
     'AuthModule',
@@ -65,6 +77,7 @@ const EXPECTED = {
     'injectTraceContext',
     'extractTraceContext',
     'currentTraceparent',
+    'SUPPORTED_INSTRUMENTATIONS',
   ],
   '/internal-http': ['InternalHttpClient', 'InternalHttpError'],
   '/analytics': [
@@ -77,7 +90,10 @@ const EXPECTED = {
     'ZoneIndex',
     'AlertEmitter',
     'DetectorTestHarness',
+    'DetectorDescriptionDto',
+    'DETECTOR_ENV',
   ],
+  '/internal': ['DurableConsumerRunner', 'NatsConsumerRuntime'],
   '/testing': [
     'startTestInfra',
     'provisionServiceSchema',
@@ -85,6 +101,9 @@ const EXPECTED = {
     'buildTestApp',
     'makeTestEnvelope',
     'waitFor',
+    'testInfraGlobalSetup',
+    'testInfra',
+    'uniqueName',
   ],
 };
 

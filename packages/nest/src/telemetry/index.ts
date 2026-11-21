@@ -1,8 +1,11 @@
 export {
   DEFAULT_IGNORED_PATHS,
   DEFAULT_INSTRUMENTATIONS,
+  enabledInstrumentations,
+  type InstrumentationName,
   shutdownTelemetry,
   startTelemetry,
+  SUPPORTED_INSTRUMENTATIONS,
   type TelemetryHandle,
   type TelemetryOptions,
 } from './start-telemetry.js';

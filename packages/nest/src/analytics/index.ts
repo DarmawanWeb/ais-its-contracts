@@ -14,6 +14,7 @@ export {
   type AlertPersistence,
   type AlertPublisher,
   type AlertResolution,
+  type AlertResolveOptions,
   type AlertSignal,
   AlertSignalError,
   type AlertUpdate,
@@ -49,6 +50,10 @@ export {
   type PositionOutcome,
 } from './detector-metrics.js';
 export {
+  ApiDetectorsResponse,
+  DetectorDescriptionDto,
+} from './detector-description.dto.js';
+export {
   type DetectorDescription,
   DetectorRegistrationError,
   DetectorRegistry,
@@ -58,10 +63,14 @@ export {
   type RegisteredDetector,
 } from './detector-registry.js';
 export { DetectorRunner } from './detector-runner.js';
-export { DetectorRunnerModule } from './detector-runner.module.js';
+export {
+  DetectorRunnerModule,
+  type DetectorRunnerModuleAsyncOptions,
+} from './detector-runner.module.js';
 export {
   ALERT_PERSISTENCE,
   DETECTOR_CLOCK,
+  DETECTOR_ENV,
   DETECTOR_RUNNER_OPTIONS,
   type DetectorRunnerOptions,
 } from './detector-runner.options.js';
@@ -84,12 +93,16 @@ export {
   type DistanceModel,
   distanceToArc,
   geodesicDistanceM,
+  haversineM,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- deprecated alias kept for compatibility
   haversineMeters,
   initialBearingDeg,
   interpolateGreatCircle,
   MEAN_EARTH_RADIUS_M,
   nearestPointOnArc,
   searchBox,
+  vincentyM,
+  // eslint-disable-next-line @typescript-eslint/no-deprecated -- deprecated alias kept for compatibility
   vincentyMeters,
   WGS84_FLATTENING,
   WGS84_SEMI_MAJOR_AXIS_M,

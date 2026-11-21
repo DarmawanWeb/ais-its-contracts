@@ -2,6 +2,7 @@ import {
   type DynamicModule,
   type ForwardReference,
   Injectable,
+  Logger,
   Module,
   type OnApplicationShutdown,
   type Type,
@@ -29,11 +30,16 @@ export interface PlatformRootOptions {
   readonly logging?: LoggingModuleOptions | undefined;
 }
 
-/** Flushes the OpenTelemetry SDK (if started) once the application stopped. */
+/** Flushes the OpenTelemetry SDK (if started) once the application stopped, and says so. */
 @Injectable()
 class TelemetryShutdown implements OnApplicationShutdown {
-  async onApplicationShutdown(): Promise<void> {
+  private readonly logger = new Logger('Shutdown');
+
+  async onApplicationShutdown(signal?: string): Promise<void> {
     await shutdownTelemetry();
+    this.logger.log(
+      `Shutdown complete${signal === undefined ? '' : ` (${signal})`}`,
+    );
   }
 }
 

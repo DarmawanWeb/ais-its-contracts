@@ -5,6 +5,7 @@ import {
   type EventType,
   ORDERED_CONSUMERS,
   type OrderedConsumerDefinition,
+  type OrderedConsumerName,
   type TypedEventEnvelope,
 } from '@darmawanweb/ais-its-contracts/events';
 
@@ -12,17 +13,20 @@ import {
 export type DurableConsumerRef =
   DurableConsumerName | DurableConsumerDefinition;
 
-/** An ordered consumer: a contracts `ORDERED_CONSUMERS` name or an explicit definition. */
-export type OrderedConsumerRef = string | OrderedConsumerDefinition;
+/** An ordered consumer: a contracts `ORDERED_CONSUMERS` key or an explicit definition. */
+export type OrderedConsumerRef =
+  OrderedConsumerName | OrderedConsumerDefinition;
 
-/** Event types delivered to a consumer reference. */
+/** Event types delivered to a (durable or ordered) consumer reference. */
 export type ConsumerEventType<Ref> = Ref extends DurableConsumerName
   ? (typeof CONSUMERS)[Ref]['eventTypes'][number]
-  : Ref extends { readonly eventTypes: readonly (infer Type)[] }
-    ? Type extends EventType
-      ? Type
-      : never
-    : EventType;
+  : Ref extends OrderedConsumerName
+    ? (typeof ORDERED_CONSUMERS)[Ref]['eventTypes'][number]
+    : Ref extends { readonly eventTypes: readonly (infer Type)[] }
+      ? Type extends EventType
+        ? Type
+        : never
+      : EventType;
 
 /**
  * The envelope a handler of `Ref` receives: a union discriminated by `type`
@@ -58,9 +62,9 @@ export function resolveOrderedConsumer(
   ref: OrderedConsumerRef,
 ): OrderedConsumerDefinition {
   if (typeof ref !== 'string') return ref;
-  const definition = ORDERED_CONSUMERS.find(
-    (consumer) => consumer.name === ref,
-  );
+  const definition: OrderedConsumerDefinition | undefined = (
+    ORDERED_CONSUMERS as Readonly<Record<string, OrderedConsumerDefinition>>
+  )[ref];
   if (definition === undefined)
     throw new UnknownConsumerError(`Unknown ordered consumer "${ref}"`);
   return definition;

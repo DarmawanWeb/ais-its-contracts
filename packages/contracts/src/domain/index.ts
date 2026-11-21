@@ -21,4 +21,5 @@ export * from './telemetry.js';
 export * from './units.js';
 export * from './vessel.js';
 export type { OpenVocabulary } from './vocabulary.js';
+export * from './zone-properties.js';
 export * from './zones.js';

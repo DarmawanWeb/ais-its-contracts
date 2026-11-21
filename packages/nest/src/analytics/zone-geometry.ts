@@ -11,7 +11,7 @@ import {
   type DistanceModel,
   distanceToArc,
   geodesicDistanceM,
-  haversineMeters,
+  haversineM,
   interpolateGreatCircle,
   searchBox,
 } from './geodesy.js';
@@ -391,7 +391,7 @@ function densifyRing(ring: readonly GeoJsonPosition[]): GeoJsonPosition[] {
     if (start !== undefined && start[0] !== end[0]) {
       const from = { lon: start[0], lat: start[1] };
       const to = { lon: end[0], lat: end[1] };
-      const pieces = Math.ceil(haversineMeters(from, to) / MAX_POLYGON_EDGE_M);
+      const pieces = Math.ceil(haversineM(from, to) / MAX_POLYGON_EDGE_M);
       for (let piece = 1; piece < pieces; piece += 1) {
         const point = interpolateGreatCircle(from, to, piece / pieces);
         result.push([point.lon, point.lat]);

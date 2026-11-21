@@ -88,10 +88,16 @@ const NatsServersSchema = envList().pipe(
 );
 
 /** proxy-addr names accepted in `TRUSTED_PROXIES`. */
-export const TRUSTED_PROXY_NAMES = ['loopback', 'linklocal', 'uniquelocal'] as const;
+export const TRUSTED_PROXY_NAMES = [
+  'loopback',
+  'linklocal',
+  'uniquelocal',
+] as const;
 
 /** Default `TRUSTED_PROXIES`: proxies on loopback and private networks only. */
-export const DEFAULT_TRUSTED_PROXIES: readonly string[] = [...TRUSTED_PROXY_NAMES];
+export const DEFAULT_TRUSTED_PROXIES: readonly string[] = [
+  ...TRUSTED_PROXY_NAMES,
+];
 
 function isProxyAddress(entry: string): boolean {
   if ((TRUSTED_PROXY_NAMES as readonly string[]).includes(entry)) return true;

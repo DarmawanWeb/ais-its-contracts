@@ -20,23 +20,25 @@ function fakeEndpoint(issuer: TestJwtIssuer) {
     calls: 0,
     redirects: [] as (RequestInit['redirect'] | undefined)[],
   };
-  const fetchImpl = (async (_url: URL, init?: RequestInit) => {
+  const fetchImpl = ((_url: URL, init?: RequestInit) => {
     state.calls += 1;
     state.redirects.push(init?.redirect);
     switch (state.mode) {
       case 'ok':
-        return Response.json(issuer.jwks);
+        return Promise.resolve(Response.json(issuer.jwks));
       case '503':
-        return new Response('closing', { status: 503 });
+        return Promise.resolve(new Response('closing', { status: 503 }));
       case 'html':
-        return new Response('<html/>', { status: 200 });
+        return Promise.resolve(new Response('<html/>', { status: 200 }));
       case 'redirect':
-        return new Response(null, {
-          status: 307,
-          headers: { location: 'https://elsewhere.test/jwks' },
-        });
+        return Promise.resolve(
+          new Response(null, {
+            status: 307,
+            headers: { location: 'https://elsewhere.test/jwks' },
+          }),
+        );
       case 'down':
-        throw new TypeError('fetch failed: ECONNREFUSED');
+        return Promise.reject(new TypeError('fetch failed: ECONNREFUSED'));
     }
   }) as typeof fetch;
   return { state, fetchImpl };

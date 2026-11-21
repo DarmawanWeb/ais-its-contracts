@@ -1,35 +1,11 @@
-import type { TestProject } from 'vitest/node';
-
-import { startTestInfra } from '../../src/testing/infra.js';
+import { testInfraGlobalSetup } from '../../src/testing/index.js';
 
 /**
  * Starts PostgreSQL (TimescaleDB + PostGIS), NATS and Valkey once for every
- * integration test file and provides their endpoints (`inject('infra')`).
+ * integration test file (the kit's own `testInfraGlobalSetup`, as services use it).
  */
-export async function setup(
-  project: TestProject,
-): Promise<() => Promise<void>> {
-  const infra = await startTestInfra({
-    postgres: true,
-    nats: true,
-    redis: true,
-  });
-  project.provide('infra', {
-    postgresAdminUrl: infra.postgres.adminUrl,
-    natsUrl: infra.nats.url,
-    natsMonitorUrl: infra.nats.monitorUrl,
-    redisUrl: infra.redis.url,
-  });
-  return () => infra.stop();
-}
-
-declare module 'vitest' {
-  export interface ProvidedContext {
-    infra: {
-      postgresAdminUrl: string;
-      natsUrl: string;
-      natsMonitorUrl: string;
-      redisUrl: string;
-    };
-  }
-}
+export const setup = testInfraGlobalSetup({
+  postgres: true,
+  nats: true,
+  redis: true,
+});

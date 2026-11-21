@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  Logger,
   Res,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -26,6 +27,7 @@ import { ReadinessRegistry } from './readiness.js';
 @Public()
 @Controller('health')
 export class HealthController implements BeforeApplicationShutdown {
+  private readonly logger = new Logger('Health');
   private shuttingDown = false;
 
   constructor(
@@ -35,8 +37,11 @@ export class HealthController implements BeforeApplicationShutdown {
   ) {}
 
   /** Stops reporting ready so that load balancers drain the instance. */
-  beforeApplicationShutdown(): void {
+  beforeApplicationShutdown(signal?: string): void {
     this.shuttingDown = true;
+    this.logger.log(
+      `Shutting down${signal === undefined ? '' : ` (${signal})`}: /health/ready answers 503, draining`,
+    );
   }
 
   /** Liveness: no dependency is checked. */

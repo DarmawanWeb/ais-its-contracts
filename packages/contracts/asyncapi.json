@@ -2,7 +2,7 @@
   "asyncapi": "3.0.0",
   "info": {
     "title": "AIS Maritime Intelligence Events",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "NATS JetStream contracts of AIS Maritime Intelligence v2 (spec section 7), generated from @darmawanweb/ais-its-contracts. Every message is a JSON event envelope; \"data\" follows the payload schema of its \"type\".",
     "license": { "name": "UNLICENSED" }
   },

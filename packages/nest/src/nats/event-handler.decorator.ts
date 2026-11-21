@@ -1,5 +1,4 @@
 import type {
-  AnyEventEnvelope,
   DurableConsumerDefinition,
   OrderedConsumerDefinition,
 } from '@darmawanweb/ais-its-contracts/events';
@@ -113,9 +112,11 @@ export type OrderedDeliverPolicy =
   | { readonly startSequence: number };
 
 /** Options of {@link OrderedEventHandler}. */
-export interface OrderedEventHandlerOptions {
-  /** A contracts `ORDERED_CONSUMERS` name (e.g. `'notification-positions'`) or an explicit definition. */
-  readonly consumer: OrderedConsumerRef;
+export interface OrderedEventHandlerOptions<
+  Ref extends OrderedConsumerRef = OrderedConsumerRef,
+> {
+  /** A contracts `ORDERED_CONSUMERS` key (e.g. `'notification-positions'`) or an explicit definition. */
+  readonly consumer: Ref;
   /** Default `'new'`. */
   readonly deliver?: OrderedDeliverPolicy | undefined;
 }
@@ -266,12 +267,14 @@ export function EventHandler<const Ref extends DurableConsumerRef>(
  *
  * @example
  * @OrderedEventHandler({ consumer: 'notification-positions' })
- * onPosition(event: AnyEventEnvelope) { this.gateway.broadcast(event); }
+ * onPosition(event: ConsumerEnvelope<'notification-positions'>) { this.gateway.broadcast(event.data); }
  */
-export function OrderedEventHandler(options: OrderedEventHandlerOptions) {
+export function OrderedEventHandler<const Ref extends OrderedConsumerRef>(
+  options: OrderedEventHandlerOptions<Ref>,
+) {
   const definition = resolveOrderedConsumer(options.consumer);
   const deliver = options.deliver ?? 'new';
-  return <Method extends EventHandlerMethod<AnyEventEnvelope>>(
+  return <Method extends EventHandlerMethod<ConsumerEnvelope<Ref>>>(
     _target: object,
     _key: string | symbol,
     descriptor: TypedPropertyDescriptor<Method>,

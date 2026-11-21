@@ -168,7 +168,9 @@ export class DurableConsumerRunner {
           ? undefined
           : new Date(this.lastActivityAt),
       failingSince:
-        this.failingSince === undefined ? undefined : new Date(this.failingSince),
+        this.failingSince === undefined
+          ? undefined
+          : new Date(this.failingSince),
       lastError: this.lastError,
     };
   }
@@ -222,37 +224,32 @@ export class DurableConsumerRunner {
   private async watchStatus(messages: ConsumerMessages): Promise<void> {
     try {
       for await (const status of messages.status()) {
-        switch (status.type) {
-          case 'heartbeat':
-          case 'next':
-            this.touch();
-            break;
-          case 'consumer_deleted':
-          case 'consumer_not_found':
-          case 'stream_not_found':
-            this.fail(`${status.type.replaceAll('_', ' ')}`);
-            this.recover(status.type);
-            break;
-          case 'heartbeats_missed':
-            this.logger.warn(
-              `Missed ${status.count} heartbeat(s) from the server`,
-            );
-            break;
-          case 'consumer_pinned':
-            if (this.standby)
-              this.logger.log('Became the active instance of the consumer');
-            this.standby = false;
-            this.touch();
-            break;
-          case 'consumer_unpinned':
-            if (!this.standby)
-              this.logger.log('Another instance is active: standing by');
-            this.standby = true;
-            this.touch();
-            break;
-          default:
-            break;
+        const { type } = status;
+        if (type === 'heartbeat' || type === 'next') {
+          this.touch();
+        } else if (
+          type === 'consumer_deleted' ||
+          type === 'consumer_not_found' ||
+          type === 'stream_not_found'
+        ) {
+          this.fail(type.replaceAll('_', ' '));
+          this.recover(type);
+        } else if (type === 'heartbeats_missed') {
+          this.logger.warn(
+            `Missed ${status.count} heartbeat(s) from the server`,
+          );
+        } else if (type === 'consumer_pinned') {
+          if (this.standby)
+            this.logger.log('Became the active instance of the consumer');
+          this.standby = false;
+          this.touch();
+        } else if (type === 'consumer_unpinned') {
+          if (!this.standby)
+            this.logger.log('Another instance is active: standing by');
+          this.standby = true;
+          this.touch();
         }
+        // Other notifications (flow control, discards, debug) need no action.
       }
     } catch {
       // The status iterator ends with the consume loop.

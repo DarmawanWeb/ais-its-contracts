@@ -277,10 +277,15 @@ CALL refresh_continuous_aggregate('readings_hourly', NULL, now() - INTERVAL '1 h
       '0003_third.sql': 'CREATE TABLE third (id int);',
     });
     expect(
-      (await runMigrations({ pool, schema, dir })).applied.map((m) => m.version),
+      (await runMigrations({ pool, schema, dir })).applied.map(
+        (m) => m.version,
+      ),
     ).toEqual([1, 3]);
     // Merged from another branch after 0003 was deployed:
-    await writeFile(join(dir, '0002_second.sql'), 'CREATE TABLE second (id int);');
+    await writeFile(
+      join(dir, '0002_second.sql'),
+      'CREATE TABLE second (id int);',
+    );
     const refused = runMigrations({ pool, schema, dir });
     await expect(refused).rejects.toBeInstanceOf(MigrationOrderError);
     await expect(refused).rejects.toThrow(/0002_second\.sql.*0003/);

@@ -49,8 +49,7 @@ export async function createPlatformApp(
     }),
     createFastifyAdapter({
       bodyLimitBytes: options.adapter?.bodyLimitBytes,
-      trustProxy:
-        options.adapter?.trustProxy ?? options.config.TRUSTED_PROXIES,
+      trustProxy: options.adapter?.trustProxy ?? options.config.TRUSTED_PROXIES,
     }),
     // eslint-disable-next-line @typescript-eslint/no-unsafe-class-instance-assignment -- Nest declares its options as classes; plain objects are the documented usage
     {
