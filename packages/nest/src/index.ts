@@ -15,6 +15,7 @@ export {
   type ImportableModule,
   OpenApiDriftError,
   SHUTDOWN_SIGNALS,
+  trustedProxiesWarning,
 } from './bootstrap/index.js';
 export * from './config/index.js';
 export * from './errors/index.js';

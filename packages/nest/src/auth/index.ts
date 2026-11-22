@@ -39,9 +39,11 @@ export {
   Internal,
   IS_INTERNAL_KEY,
   IS_PUBLIC_KEY,
+  PLATFORM_ADMIN_KEY,
   Public,
   REQUIRED_PERMISSIONS_KEY,
   RequirePermissions,
+  RequirePlatformAdmin,
 } from './decorators.js';
 export { internalTokenMatches } from './internal-token.js';
 export {

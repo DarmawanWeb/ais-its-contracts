@@ -23,15 +23,19 @@ export {
 export {
   CONSUMER_STALL_THRESHOLD_MS,
   type ConsumerHealth,
+  type ConsumerState,
 } from './durable-consumer-runner.js';
 export {
+  DeadLetterError,
   EventSubjectMismatchError,
+  EventTooLargeError,
   NonRetryableError,
   RetryableError,
 } from './errors.js';
 export {
   type CoreMessageHandler,
   type CoreMessageOutcome,
+  type CorePayloadSchema,
   CoreSubscriptionConfigError,
   CoreSubscriptionHandler,
   type CoreSubscriptionHandlerOptions,
@@ -50,7 +54,10 @@ export {
   DEFAULT_ACK_WAIT_MS,
   DEFAULT_PINNED_TTL_MS,
   EXCLUSIVE_CONSUMER_GROUP,
+  type ExclusiveConsumerEvent,
+  type ExclusiveConsumerListener,
   type ExclusiveConsumerOptions,
+  type ExclusiveConsumerTransition,
   type EventContext,
   EventHandler,
   type EventHandlerMethod,
@@ -71,6 +78,11 @@ export {
   MAX_HEADER_VALUE_LENGTH,
 } from './headers.js';
 export {
+  DEFAULT_HEADER_ALLOWANCE_BYTES,
+  eventMessageSize,
+  type EventMessageSizeOptions,
+} from './message-size.js';
+export {
   type NatsHandles,
   NatsClient,
   NatsNotConnectedError,
@@ -78,7 +90,11 @@ export {
 export { NatsHealthIndicator } from './nats.health.js';
 export { type ConsumeOutcome, NatsMetrics } from './nats.metrics.js';
 export { NatsModule } from './nats.module.js';
-export { NATS_OPTIONS, type NatsModuleOptions } from './nats.options.js';
+export {
+  DEFAULT_MIN_MAX_PAYLOAD_BYTES,
+  NATS_OPTIONS,
+  type NatsModuleOptions,
+} from './nats.options.js';
 export { CatchUpTimeoutError } from './ordered-consumer.js';
 export {
   OrderedConsumers,
@@ -86,11 +102,13 @@ export {
   type OrderedSubscriptionOptions,
 } from './ordered-consumers.service.js';
 export {
+  type StreamEnsureOptions,
   type StreamEnsureOutcome,
   type StreamEnsureRole,
   StreamManager,
 } from './stream-manager.js';
 export {
+  type ReplayEnd,
   type ReplayOptions,
   type ReplayReport,
   StreamReplayer,
@@ -100,10 +118,19 @@ export {
   type EnqueueEventOptions,
   OUTBOX_OPTIONS,
   OUTBOX_TABLE,
+  OutboxConfigError,
   OutboxModule,
+  type OutboxModuleAsyncOptions,
   type OutboxModuleOptions,
   type OutboxQueryable,
   OutboxRelay,
+  type OutboxRelayMode,
   type OutboxRelayResult,
   outboxTableSql,
+  outboxUpgradeSql,
 } from './outbox.js';
+export {
+  DEFAULT_OUTBOX_RETRY_BASE_MS,
+  DEFAULT_OUTBOX_RETRY_MAX_MS,
+  type OutboxRetryOptions,
+} from './outbox-plan.js';

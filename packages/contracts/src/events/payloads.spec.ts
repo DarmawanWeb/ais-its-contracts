@@ -279,6 +279,41 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
       path: 'relatedMmsi',
     },
   ],
+  'alert.resolved.v1': [
+    { name: 'malformed type', patch: { type: 'Collision Risk' }, path: 'type' },
+    { name: 'unknown domain', patch: { domain: 'emission' }, path: 'domain' },
+    {
+      name: 'domain of another registry type',
+      patch: { domain: 'surveillance' },
+      path: 'domain',
+    },
+    { name: 'alertId not a UUID', patch: { alertId: 'a-1' }, path: 'alertId' },
+    { name: 'missing alertId', patch: { alertId: undefined }, path: 'alertId' },
+    { name: 'empty dedupKey', patch: { dedupKey: '' }, path: 'dedupKey' },
+    {
+      name: 'openedAt with offset',
+      patch: { openedAt: '2026-11-20T15:31:00+07:00' },
+      path: 'openedAt',
+    },
+    {
+      name: 'missing resolvedAt',
+      patch: { resolvedAt: undefined },
+      path: 'resolvedAt',
+    },
+    {
+      name: 'reason over 500 characters',
+      patch: { reason: 'x'.repeat(501) },
+      path: 'reason',
+    },
+    {
+      name: 'malformed methodId',
+      patch: { methodId: 'EWS' },
+      path: 'methodId',
+    },
+    { name: 'unknown severity', patch: { severity: 'high' }, path: 'severity' },
+    { name: 'zoneId not a UUID', patch: { zoneId: 'zone-1' }, path: 'zoneId' },
+    { name: 'data is an array', patch: { data: [1, 2] }, path: 'data' },
+  ],
   'notify.email.requested.v1': [
     { name: 'invalid recipient', patch: { to: 'not-an-email' }, path: 'to' },
     {
@@ -439,6 +474,44 @@ describe('spec 1.1 payload changes', () => {
         },
       ],
     });
+  });
+
+  it('accepts a resolution of a future alert type and checks registry domains', () => {
+    const resolved = EVENT_EXAMPLES['alert.resolved.v1'];
+    expect(validateEvent('alert.resolved.v1', resolved)).toEqual({
+      success: true,
+      data: resolved,
+    });
+    expect(
+      validateEvent('alert.resolved.v1', {
+        ...resolved,
+        type: 'anchor_dragging',
+        domain: 'safety',
+        reason: null,
+        zoneId: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      validateEvent('alert.resolved.v1', {
+        ...resolved,
+        type: 'transhipment',
+        relatedMmsi: 525019876,
+      }),
+    ).toMatchObject({
+      success: false,
+      issues: [
+        {
+          field: 'domain',
+          message: 'Alert type "transhipment" belongs to domain "surveillance"',
+        },
+      ],
+    });
+    expect(
+      validateEvent('alert.resolved.v1', {
+        ...resolved,
+        reason: 'x'.repeat(500),
+      }).success,
+    ).toBe(true);
   });
 
   it('accepts an optional fixed capacity on the ship type', () => {

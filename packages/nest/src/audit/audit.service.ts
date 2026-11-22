@@ -15,8 +15,10 @@ import type { Counter } from 'prom-client';
 
 import type { Principal } from '../auth/principal.js';
 import { errorMessage } from '../common/retry.js';
+import { clientIp } from '../http/client-ip.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { EventPublisher } from '../nats/event-publisher.js';
+import { enqueueEvent, type OutboxQueryable } from '../nats/outbox.js';
 import { StreamManager } from '../nats/stream-manager.js';
 
 /** What happened, on which target. */
@@ -33,8 +35,15 @@ export interface AuditEntry {
 
 /** The request facts recorded with an entry (a `FastifyRequest` fits). */
 export interface AuditRequest {
+  /** `request.ip`; normalized with `clientIp()` (`null` when not an address). */
   readonly ip?: string | undefined;
   readonly headers?: IncomingHttpHeaders | undefined;
+}
+
+/** Options of {@link AuditService.enqueue}. */
+export interface AuditEnqueueOptions {
+  /** Outbox table. Default `outbox`. */
+  readonly table?: string | undefined;
 }
 
 function userAgentOf(request: AuditRequest | undefined): string | null {
@@ -44,9 +53,17 @@ function userAgentOf(request: AuditRequest | undefined): string | null {
 
 /**
  * Publishes `audit.recorded.v1` to `audit.v1.<SERVICE_NAME>` (spec §7.3), the
- * central audit log being written by the auth service. Best effort: it never
- * throws into business code; failures are logged and counted
- * (`aisits_audit_failures_total`) and `record()` resolves `false`.
+ * central audit log being written by the auth service.
+ *
+ * - {@link AuditService.record} is best effort: it never throws into
+ *   business code; failures (a NATS outage) are logged and counted
+ *   (`aisits_audit_failures_total`) and it resolves `false` — the record is
+ *   lost.
+ * - {@link AuditService.enqueue} writes the record to the transactional
+ *   outbox in the caller's transaction instead: it commits or rolls back with
+ *   the change it describes and the `OutboxRelay` publishes it, so security
+ *   relevant records survive outages (needs an outbox table and
+ *   `OutboxModule`).
  *
  * @example
  * await this.audit.record({ action: 'vessel.update', targetType: 'vessel', targetId: id, meta: { fields } }, principal, request);
@@ -73,7 +90,12 @@ export class AuditService implements OnModuleInit {
     await this.streams.ensure(['AUDIT']);
   }
 
-  /** The `audit.recorded.v1` payload of an entry. */
+  /**
+   * The `audit.recorded.v1` payload of an entry. The request's `ip` is
+   * normalized with `clientIp()` (brackets, ports and zone ids stripped,
+   * `null` for anything that is not an IPv4/IPv6 address), so it fits an
+   * `inet` column.
+   */
   buildRecord(
     entry: AuditEntry,
     principal?: Principal,
@@ -87,11 +109,41 @@ export class AuditService implements OnModuleInit {
       action: entry.action,
       targetType: entry.targetType ?? null,
       targetId: entry.targetId ?? null,
-      ip: request?.ip ?? null,
+      ip: clientIp(request?.ip),
       userAgent: userAgentOf(request),
       meta: { ...(entry.meta ?? {}) },
       at: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Adds the record of an entry to the transactional outbox through
+   * `client`, inside the caller's transaction (`enqueueEvent`): it is
+   * published by the `OutboxRelay` on `audit.v1.<SERVICE_NAME>` after the
+   * commit, and never when the transaction rolls back. Unlike
+   * {@link record} it throws (an invalid entry, a failing insert), so the
+   * change it describes fails with it.
+   *
+   * @returns the envelope id of the queued event.
+   * @example
+   * await withTransaction(this.pool, async (client) => {
+   *   await this.users.disableMfa(client, userId);
+   *   await this.audit.enqueue(client, { action: 'user.mfa_disable', targetType: 'user', targetId: userId }, principal, request);
+   * });
+   */
+  async enqueue(
+    client: OutboxQueryable,
+    entry: AuditEntry,
+    principal?: Principal,
+    request?: AuditRequest,
+    options: AuditEnqueueOptions = {},
+  ): Promise<string> {
+    return enqueueEvent(
+      client,
+      EVENT_TYPES.AUDIT_RECORDED,
+      this.buildRecord(entry, principal, request),
+      { table: options.table },
+    );
   }
 
   /** Records an entry; resolves `true` once stored in JetStream, `false` on failure. */

@@ -114,7 +114,10 @@ export class DetectorRegistry {
   private readonly disabled: AnyDetector[] = [];
   /** Timed-out calls that are still running, by detector and vessel. */
   private readonly lingering = new Map<string, Promise<unknown>>();
+  /** Detector calls in progress (each settles within `callTimeoutMs`). */
+  private readonly running = new Set<Promise<boolean>>();
   private readonly logger = new Logger('DetectorRegistry');
+  private activeInstance = true;
 
   constructor(private readonly options: DetectorRegistryOptions) {
     this.env = options.env ?? process.env;
@@ -130,6 +133,38 @@ export class DetectorRegistry {
   /** `true` when `DETECTORS` (or `enabled`) disabled some registered detectors. */
   get isSubset(): boolean {
     return this.disabled.length > 0;
+  }
+
+  /**
+   * `true` while this instance is the active detector instance (default):
+   * what `DetectorContext.isActive()` returns. The runner sets it from its
+   * exclusive position consumer, the test harness from `activate()` /
+   * `deactivate()`; ticks run only while it is `true`.
+   */
+  get active(): boolean {
+    return this.activeInstance;
+  }
+
+  /** Sets {@link active} (see `DetectorEngine.activate` / `deactivate`). */
+  setActive(active: boolean): void {
+    this.activeInstance = active;
+  }
+
+  /**
+   * Resolves once the detector calls running now have settled (a call that
+   * exceeds `callTimeoutMs` counts as settled when it times out).
+   */
+  async settled(): Promise<void> {
+    await Promise.allSettled([...this.running]);
+  }
+
+  /**
+   * `true` when an enabled detector owns the occurrence: raised by it, or
+   * restored without an owner in its domain (what its `DetectorContext.alerts`
+   * sees). The runner reloads exactly these occurrences on activation.
+   */
+  owns(alert: OpenAlert): boolean {
+    return this.registered.some((entry) => ownedBy(alert, entry.descriptor));
   }
 
   /**
@@ -249,6 +284,32 @@ export class DetectorRegistry {
     );
   }
 
+  /** Calls `onActivated` of every enabled detector that has it (concurrently, isolated). */
+  async dispatchActivated(): Promise<void> {
+    await Promise.all(
+      this.registered
+        .filter((entry) => entry.detector.onActivated !== undefined)
+        .map((entry) =>
+          this.invoke(entry, 'onActivated', undefined, (call) =>
+            entry.detector.onActivated?.(entry.context, call),
+          ),
+        ),
+    );
+  }
+
+  /** Calls `onDeactivated` of every enabled detector that has it (concurrently, isolated). */
+  async dispatchDeactivated(): Promise<void> {
+    await Promise.all(
+      this.registered
+        .filter((entry) => entry.detector.onDeactivated !== undefined)
+        .map((entry) =>
+          this.invoke(entry, 'onDeactivated', undefined, (call) =>
+            entry.detector.onDeactivated?.(entry.context, call),
+          ),
+        ),
+    );
+  }
+
   /** Calls `onVesselChanged` of every enabled detector that has it. */
   async dispatchVesselChange(change: DetectorVesselChange): Promise<void> {
     await Promise.all(
@@ -267,9 +328,21 @@ export class DetectorRegistry {
    * counted. A call that exceeds `callTimeoutMs` has its signal aborted and
    * is no longer awaited; while it still runs, later calls of the same
    * detector for the same vessel (`key`) are skipped (and counted), so calls
-   * for one vessel never overlap.
+   * for one vessel never overlap. Tracked for {@link settled}.
    */
-  private async invoke(
+  private invoke(
+    entry: RegisteredDetector,
+    hook: DetectorHook,
+    key: string | undefined,
+    call: (options: DetectorCall) => void | Promise<void>,
+  ): Promise<boolean> {
+    const running = this.invokeNow(entry, hook, key, call);
+    this.running.add(running);
+    void running.finally(() => this.running.delete(running));
+    return running;
+  }
+
+  private async invokeNow(
     entry: RegisteredDetector,
     hook: DetectorHook,
     key: string | undefined,
@@ -363,11 +436,7 @@ export class DetectorRegistry {
     const declared = alertTypesOf(detector);
     /** Occurrences of this detector, or unowned ones of its domain (restored rows). */
     const owns = (alert: OpenAlert | undefined): alert is OpenAlert =>
-      alert !== undefined &&
-      (alert.detector === descriptor.id ||
-        (alert.detector === undefined &&
-          (getAlertType(alert.type)?.domain ?? descriptor.domain) ===
-            descriptor.domain));
+      alert !== undefined && ownedBy(alert, descriptor);
     const alerts: DetectorAlerts = {
       raise: async (signal: DetectorAlertSignal): Promise<AlertOutcome> => {
         const methodId = signal.methodId ?? descriptor.methodIds[0];
@@ -396,8 +465,19 @@ export class DetectorRegistry {
       },
       // Ownership is checked in turn with the key's other operations, so a
       // raise of this detector that is still persisting is resolved too.
-      resolve: (dedupKey, options = {}) =>
-        services.alerts.resolve(dedupKey, { ...options, accept: owns }),
+      // Restored occurrences without a domain or method id take the
+      // detector's for their alert.resolved.v1.
+      resolve: async (dedupKey, options = {}) => {
+        const resolved = await services.alerts.resolve(dedupKey, {
+          ...options,
+          accept: owns,
+          domain: descriptor.domain,
+          methodId: descriptor.methodIds[0],
+        });
+        if (resolved) this.metrics.resolutions.inc({ detector: descriptor.id });
+        return resolved;
+      },
+      forget: (dedupKey) => services.alerts.forget(dedupKey, { accept: owns }),
       get: (dedupKey) => {
         const alert = services.alerts.get(dedupKey);
         return owns(alert) ? alert : undefined;
@@ -415,8 +495,17 @@ export class DetectorRegistry {
       alerts,
       logger,
       now: services.clock,
+      isActive: () => this.activeInstance,
     };
   }
+}
+
+/** `true` when `descriptor`'s alerts API sees the occurrence (its own, or unowned of its domain). */
+function ownedBy(alert: OpenAlert, descriptor: DetectorDescriptor): boolean {
+  if (alert.detector !== undefined) return alert.detector === descriptor.id;
+  const domain =
+    alert.domain ?? getAlertType(alert.type)?.domain ?? descriptor.domain;
+  return domain === descriptor.domain;
 }
 
 /** Declared alert types of a detector, `null` when it declares none. */

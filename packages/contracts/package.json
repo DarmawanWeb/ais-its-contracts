@@ -1,6 +1,6 @@
 {
   "name": "@darmawanweb/ais-its-contracts",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Isomorphic contracts of AIS Maritime Intelligence: event envelope and payload schemas, NATS streams and subjects, roles and permissions, realtime protocol, API problem details, domain vocabulary and the methodology catalog.",
   "keywords": [
     "ais",
@@ -146,6 +146,7 @@
     "schemas:check": "tsx scripts/generate-artifacts.ts --check",
     "references:sync": "tsx scripts/sync-references.ts",
     "references:check": "tsx scripts/sync-references.ts --check",
+    "references:verify": "tsx scripts/verify-references.ts",
     "check:package": "node scripts/smoke-dist.mjs && publint --strict && attw --pack .",
     "prepublishOnly": "pnpm run build"
   },

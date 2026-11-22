@@ -3,6 +3,13 @@ import type { StreamName } from '@darmawanweb/ais-its-contracts/events';
 /** Injection token of the {@link NatsModuleOptions}. */
 export const NATS_OPTIONS = 'AISITS_NATS_OPTIONS';
 
+/**
+ * Default {@link NatsModuleOptions.minMaxPayloadBytes}: 4 MiB, the
+ * `max_payload: 4MB` of the platform's NATS configuration
+ * (`infra/nats/nats.conf`).
+ */
+export const DEFAULT_MIN_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
+
 /** Options of `NatsModule.forRoot()`. */
 export interface NatsModuleOptions {
   /**
@@ -21,4 +28,11 @@ export interface NatsModuleOptions {
    * aborting them, ms. Default 25 s.
    */
   readonly drainTimeoutMs?: number | undefined;
+  /**
+   * Smallest server `max_payload` the service expects, bytes: a startup
+   * warning is logged when the server allows less (events larger than the
+   * server limit are refused with `EventTooLargeError`). Default
+   * {@link DEFAULT_MIN_MAX_PAYLOAD_BYTES} (4 MiB).
+   */
+  readonly minMaxPayloadBytes?: number | undefined;
 }

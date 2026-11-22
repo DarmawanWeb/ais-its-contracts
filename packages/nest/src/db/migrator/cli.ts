@@ -9,6 +9,7 @@ import {
   createLogger,
   loggerSettingsFromConfig,
 } from '../../logging/logger.js';
+import { sanitizeError } from '../errors.js';
 import { createDatabasePool, databasePoolSettings } from '../pool.js';
 import { type MigrationReport, runMigrations } from './migrator.js';
 
@@ -16,7 +17,11 @@ import { type MigrationReport, runMigrations } from './migrator.js';
 export interface MigrationsCliOptions {
   /** The service's config schema (default: the common variables only). */
   readonly configSchema?: ConfigSchema | undefined;
-  /** Migrations directory. Default `<cwd>/migrations`. */
+  /**
+   * Migrations directory. Default `migrations` resolved against the working
+   * directory (`MigrationsDirectoryNotFoundError` when it does not exist);
+   * prefer an absolute path derived from `import.meta.url`.
+   */
   readonly dir?: string | undefined;
 }
 
@@ -67,7 +72,7 @@ export async function runMigrationsCli(
     );
     return report;
   } catch (error) {
-    logger.error({ err: error }, 'Migrations failed');
+    logger.error({ err: sanitizeError(error) }, 'Migrations failed');
     process.exitCode = 1;
     return undefined;
   } finally {

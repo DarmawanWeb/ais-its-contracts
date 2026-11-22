@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /** File name of a migration: `NNNN_snake_case.sql` (spec §6). */
 export const MIGRATION_FILE_PATTERN =
@@ -26,7 +26,36 @@ export interface MigrationFile {
 
 /** Thrown for unreadable, misnamed or duplicated migration files. */
 export class MigrationFileError extends Error {
-  override readonly name = 'MigrationFileError';
+  override readonly name: string = 'MigrationFileError';
+}
+
+/**
+ * The migrations directory does not exist. Its default, `migrations`, is
+ * resolved against the working directory of the process, so a service
+ * started from another directory (`node /srv/fleet/dist/main.js`) does not
+ * find it: pass `migrationsDir` (`DatabaseModule.forRoot`) and `dir`
+ * (`runMigrationsCli`) as absolute paths derived from the module location,
+ * e.g. `fileURLToPath(new URL('../migrations', import.meta.url))`.
+ */
+export class MigrationsDirectoryNotFoundError extends MigrationFileError {
+  override readonly name: string = 'MigrationsDirectoryNotFoundError';
+
+  /**
+   * @param directory the absolute directory that was looked up.
+   * @param cwd the working directory it was resolved against.
+   */
+  constructor(
+    readonly directory: string,
+    readonly cwd: string,
+    options?: { readonly cause?: unknown },
+  ) {
+    super(
+      `Migrations directory "${directory}" does not exist (working directory "${cwd}"). ` +
+        'Pass the absolute directory as migrationsDir (DatabaseModule.forRoot) or dir (runMigrationsCli), ' +
+        "e.g. fileURLToPath(new URL('../migrations', import.meta.url)), instead of relying on the working directory.",
+      options,
+    );
+  }
 }
 
 /** SHA-256 (hex) of a migration's normalized SQL. */
@@ -61,6 +90,9 @@ export function parseMigration(
  * Reads the `.sql` files of a migrations directory in version order. Other
  * files (README, …) are ignored; misnamed `.sql` files and duplicate
  * versions are errors.
+ *
+ * @throws {MigrationsDirectoryNotFoundError} when `dir` does not exist.
+ * @throws {MigrationFileError} for an unreadable directory and invalid files.
  */
 export async function readMigrationFiles(
   dir: string,
@@ -69,6 +101,11 @@ export async function readMigrationFiles(
   try {
     entries = await readdir(dir);
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR')
+      throw new MigrationsDirectoryNotFoundError(resolve(dir), process.cwd(), {
+        cause: error,
+      });
     throw new MigrationFileError(
       `Cannot read the migrations directory "${dir}"`,
       { cause: error },

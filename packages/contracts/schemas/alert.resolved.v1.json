@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ais-its:schema:events:alert.resolved.v1",
+  "title": "AlertResolvedV1",
+  "description": "Payload (\"data\") of alert.resolved.v1. The end of an alert occurrence, published by the detector that raised it on the same subject. Consumers resolve the unresolved inbox alert with this dedupKey unless it merged an occurrence later than resolvedAt, do nothing when there is none, and are idempotent by id.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "Resolution id (the envelope id and Nats-Msg-Id of the event); consumers are idempotent by it"
+    },
+    "alertId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "description": "Id of the last alert.raised.v1 of the resolved occurrence"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Alert type: a registry type (ALERT_TYPES) or a future type; consumers accept unknown types",
+      "examples": [
+        "ews",
+        "collision",
+        "transhipment",
+        "anomaly",
+        "dark",
+        "geofence",
+        "fishing"
+      ]
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["safety", "surveillance"],
+      "description": "Analytics domain: safety or surveillance"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "critical"],
+      "description": "Severity of the last published raise of the occurrence"
+    },
+    "mmsi": {
+      "type": "integer",
+      "minimum": 100000000,
+      "maximum": 999999999,
+      "description": "Maritime Mobile Service Identity (9 digits)"
+    },
+    "relatedMmsi": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 100000000,
+          "maximum": 999999999,
+          "description": "Maritime Mobile Service Identity (9 digits)"
+        },
+        { "type": "null" }
+      ],
+      "description": "Second vessel involved (e.g. collision, transhipment)"
+    },
+    "zoneId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          "description": "UUID"
+        },
+        { "type": "null" }
+      ]
+    },
+    "dedupKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Key of the resolved occurrence (the dedupKey of its alert.raised.v1 events)"
+    },
+    "openedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "Start of the occurrence"
+    },
+    "resolvedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+      "description": "End of the condition (signal time, normally not before openedAt)"
+    },
+    "reason": {
+      "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }],
+      "description": "Why the occurrence ended, e.g. \"left the pipeline zone\""
+    },
+    "methodId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "description": "Methodology catalog id of the rule that raised the alert (spec 17)"
+    },
+    "data": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": {},
+      "description": "Detector specific details of the resolution"
+    }
+  },
+  "required": [
+    "id",
+    "alertId",
+    "type",
+    "domain",
+    "severity",
+    "mmsi",
+    "relatedMmsi",
+    "zoneId",
+    "dedupKey",
+    "openedAt",
+    "resolvedAt",
+    "reason",
+    "methodId",
+    "data"
+  ]
+}

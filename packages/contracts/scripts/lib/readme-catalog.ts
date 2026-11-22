@@ -9,6 +9,7 @@ import {
   CONSUMER_LIST,
   consumersOfEvent,
   CORE_SUBSCRIPTIONS,
+  coreSubscriptionDelivery,
   EVENT_DEFINITIONS,
   ORDERED_CONSUMER_LIST,
   SERVICE_NAMES,
@@ -98,7 +99,9 @@ export function renderConsumersTable(): string {
       ]),
       ...CORE_SUBSCRIPTIONS.map((subscription) => [
         code(subscription.name),
-        'core NATS',
+        coreSubscriptionDelivery(subscription) === 'fanout'
+          ? 'core NATS (every instance)'
+          : 'core NATS (queue group)',
         '—',
         code(subscription.subject),
         subscription.service,

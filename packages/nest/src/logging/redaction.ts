@@ -32,9 +32,18 @@ const fieldPaths = (field: string): string[] => [
 ];
 
 /**
+ * Properties of logged errors (`err`) that echo the values a database
+ * statement bound: drizzle's `DrizzleQueryError.params` and the driver's
+ * `detail` (`Key (email)=(…) already exists`). A safety net: the kit logs
+ * database errors through `sanitizeError` (`./db`), which drops both.
+ */
+export const SENSITIVE_ERROR_FIELDS = ['params', 'detail'] as const;
+
+/**
  * pino `redact.paths` of the platform (spec §10: no secrets, tokens,
  * passwords or full API keys in logs): credential headers of the serialized
- * request/response and secret fields up to four levels deep.
+ * request/response, secret fields up to four levels deep, and the bound
+ * values of logged database errors (`err.params`, `err.detail`).
  */
 export const REDACT_PATHS: readonly string[] = [
   ...SENSITIVE_HEADERS.flatMap((header) => [
@@ -43,4 +52,5 @@ export const REDACT_PATHS: readonly string[] = [
     `headers["${header}"]`,
   ]),
   ...SENSITIVE_FIELDS.flatMap(fieldPaths),
+  ...SENSITIVE_ERROR_FIELDS.map((field) => `err.${field}`),
 ];

@@ -3,7 +3,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   CORE_SUBSCRIPTIONS,
   type CoreSubscriptionDefinition,
+  coreSubscriptionDelivery,
 } from '@darmawanweb/ais-its-contracts/events';
+import { CORE_SUBSCRIPTION_PAYLOADS } from '@darmawanweb/ais-its-contracts/realtime';
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -28,13 +30,24 @@ export const CORE_SUBSCRIPTION_HANDLER_METADATA =
 /** Name of a contracts core subscription (`CORE_SUBSCRIPTIONS`). */
 export type CoreSubscriptionName = (typeof CORE_SUBSCRIPTIONS)[number]['name'];
 
+/** The validator part of a payload schema (a zod schema). */
+export interface CorePayloadSchema {
+  safeParse(value: unknown): {
+    readonly success: boolean;
+    readonly data?: unknown;
+    readonly error?: unknown;
+  };
+}
+
 /** Options of {@link CoreSubscriptionHandler}. */
 export interface CoreSubscriptionHandlerOptions {
   /** A contracts core subscription (by name) or a definition. */
   readonly subscription: CoreSubscriptionName | CoreSubscriptionDefinition;
   /**
-   * Queue group: replicas of the service share the messages. Default
-   * `SERVICE_NAME`; `false` delivers every message to every instance.
+   * Queue group. Default: the definition's `delivery` — `queue` (or none
+   * declared): `SERVICE_NAME`, replicas share the messages; `fanout`: no
+   * queue group, every instance receives every message. `false` forces
+   * fan-out, a string another queue group.
    */
   readonly queue?: string | false | undefined;
   /** Handlers running at once. Default 16. */
@@ -49,9 +62,12 @@ export interface CoreSubscriptionHandlerOptions {
 /** Resolved settings of a core subscription handler. */
 export interface CoreSubscriptionSettings {
   readonly definition: CoreSubscriptionDefinition;
+  /** The explicit `queue` option (see {@link coreSubscriptionQueue}). */
   readonly queue: string | false | undefined;
   readonly concurrency: number;
   readonly maxPending: number;
+  /** Contracts payload schema the messages are validated against, if any. */
+  readonly payloadSchema: CorePayloadSchema | undefined;
 }
 
 /** Thrown for a handler whose subscription is unknown or whose options are invalid. */
@@ -59,8 +75,85 @@ export class CoreSubscriptionConfigError extends Error {
   override readonly name = 'CoreSubscriptionConfigError';
 }
 
-/** A core NATS message handler (the message gives `subject`, `data`, `json()`, `string()`, `headers`). */
-export type CoreMessageHandler = (message: Msg) => unknown;
+/**
+ * A core NATS message handler (the message gives `subject`, `data`,
+ * `json()`, `string()`, `headers`). When contracts declares a payload schema
+ * for the subscription, `payload` is the validated JSON payload.
+ */
+export type CoreMessageHandler = (message: Msg, payload?: unknown) => unknown;
+
+/**
+ * Queue group of a core subscription handler: the explicit `queue` option
+ * wins (`false` = none); otherwise none for a `fanout` definition and
+ * `serviceName` for a `queue` one.
+ */
+export function coreSubscriptionQueue(
+  settings: Pick<CoreSubscriptionSettings, 'definition' | 'queue'>,
+  serviceName: string,
+): string | undefined {
+  if (settings.queue === false) return undefined;
+  if (settings.queue !== undefined) return settings.queue;
+  return coreSubscriptionDelivery(settings.definition) === 'fanout'
+    ? undefined
+    : serviceName;
+}
+
+function isCorePayloadSchema(value: unknown): value is CorePayloadSchema {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'safeParse') === 'function'
+  );
+}
+
+/** The zod type name of a schema (`def.type`), if readable. */
+function zodTypeOf(schema: object): unknown {
+  const def: unknown =
+    Reflect.get(schema, 'def') ??
+    Reflect.get(Reflect.get(schema, '_zod') ?? {}, 'def');
+  return typeof def === 'object' && def !== null
+    ? Reflect.get(def, 'type')
+    : undefined;
+}
+
+/**
+ * The contracts payload schema of the core subscription `name`
+ * (`CORE_SUBSCRIPTION_PAYLOADS` of `./realtime`), `undefined` for a
+ * subscription without one. Schemas that accept anything (`z.unknown()`,
+ * e.g. `telemetry-mqtt`, whose raw device JSON the service validates
+ * itself) are not applied.
+ */
+export function contractsCorePayloadSchema(
+  name: string,
+): CorePayloadSchema | undefined {
+  if (!Object.hasOwn(CORE_SUBSCRIPTION_PAYLOADS, name)) return undefined;
+  const schema: unknown = Reflect.get(CORE_SUBSCRIPTION_PAYLOADS, name);
+  if (!isCorePayloadSchema(schema)) return undefined;
+  const type = zodTypeOf(schema);
+  return type === 'unknown' || type === 'any' ? undefined : schema;
+}
+
+/** Result of validating a core message against its payload schema. */
+export type CorePayloadCheck =
+  | { readonly valid: true; readonly payload: unknown }
+  | { readonly valid: false; readonly reason: string };
+
+/** Parses a core message as JSON and validates it against `schema`. */
+export function checkCorePayload(
+  message: Pick<Msg, 'json'>,
+  schema: CorePayloadSchema,
+): CorePayloadCheck {
+  let json: unknown;
+  try {
+    json = message.json<unknown>();
+  } catch {
+    return { valid: false, reason: 'invalid JSON' };
+  }
+  const result = schema.safeParse(json);
+  return result.success
+    ? { valid: true, payload: result.data }
+    : { valid: false, reason: 'payload violates the contracts schema' };
+}
 
 function resolveDefinition(
   subscription: CoreSubscriptionHandlerOptions['subscription'],
@@ -91,11 +184,13 @@ function positive(
 export function coreSubscriptionSettings(
   options: CoreSubscriptionHandlerOptions,
 ): CoreSubscriptionSettings {
+  const definition = resolveDefinition(options.subscription);
   return {
-    definition: resolveDefinition(options.subscription),
+    definition,
     queue: options.queue,
     concurrency: positive(options.concurrency, 16, 'concurrency'),
     maxPending: positive(options.maxPending, 1_000, 'maxPending'),
+    payloadSchema: contractsCorePayloadSchema(definition.name),
   };
 }
 
@@ -103,8 +198,12 @@ export function coreSubscriptionSettings(
  * Marks a provider method as the handler of a core NATS subscription
  * (contracts `CORE_SUBSCRIPTIONS`, e.g. telemetry's MQTT gateway subject
  * `aisits.telemetry.*`). The kit subscribes when the application bootstraps
- * (queue group `SERVICE_NAME` by default), runs the handler with bounded
- * concurrency inside the log context, isolates and counts failures
+ * (queue group `SERVICE_NAME` for `queue` delivery, none for `fanout`, e.g.
+ * `notification-realtime-fanout`), validates messages against the contracts
+ * payload schema when one is declared (invalid ones are dropped and counted
+ * as `invalid`; the handler gets the parsed payload as second argument),
+ * runs the handler with bounded concurrency inside the log context,
+ * isolates and counts failures
  * (`aisits_core_messages_total{subscription,outcome}`), and drains the
  * subscription on shutdown. Core NATS has no redelivery: a handler that
  * throws loses the message (it is logged and counted).
@@ -149,8 +248,15 @@ export function getCoreSubscriptionSettings(
     : (settings as CoreSubscriptionSettings);
 }
 
-/** Outcome of one core message. */
-export type CoreMessageOutcome = 'handled' | 'failed' | 'dropped';
+/**
+ * Outcome of one core message: `handled`, `failed` (the handler threw),
+ * `dropped` (more than `maxPending` waiting) or `invalid` (not JSON, or
+ * violates the contracts payload schema: the handler is not called).
+ */
+export type CoreMessageOutcome = 'handled' | 'failed' | 'dropped' | 'invalid';
+
+/** Shortest interval between two "invalid message" warnings of one subscription, ms. */
+const INVALID_LOG_INTERVAL_MS = 10_000;
 
 /** Metrics of core subscriptions (`aisits_core_*`). */
 @Injectable()
@@ -164,7 +270,7 @@ export class CoreSubscriptionMetrics {
     const registry = metrics ?? new MetricsService();
     this.messages = registry.counter({
       name: 'core_messages_total',
-      help: 'Core NATS messages by subscription and outcome (handled, failed, dropped).',
+      help: 'Core NATS messages by subscription and outcome (handled, failed, dropped, invalid).',
       labelNames: ['subscription', 'outcome'],
     });
     this.duration = registry.histogram({
@@ -182,6 +288,7 @@ class CoreSubscriptionRunner {
   private readonly inFlight = new Set<Promise<void>>();
   private subscription: Subscription | undefined;
   private loop: Promise<void> | undefined;
+  private lastInvalidLogAt = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly runtime: NatsConsumerRuntime,
@@ -200,17 +307,20 @@ class CoreSubscriptionRunner {
 
   async start(): Promise<void> {
     const { connection } = await this.runtime.client.ready();
-    const queue =
-      this.settings.queue === false
-        ? undefined
-        : (this.settings.queue ?? this.runtime.serviceName);
+    const queue = coreSubscriptionQueue(
+      this.settings,
+      this.runtime.serviceName,
+    );
     this.subscription = connection.subscribe(this.settings.definition.subject, {
       ...(queue === undefined ? {} : { queue }),
     });
     this.loop = this.consume(this.subscription);
     this.logger.log(
       `Subscribed to ${this.settings.definition.subject} with ${this.handlerName}` +
-        `${queue === undefined ? '' : ` (queue ${queue})`}, concurrency ${this.settings.concurrency}`,
+        `${queue === undefined ? ' (fan-out)' : ` (queue ${queue})`}, concurrency ${this.settings.concurrency}` +
+        (this.settings.payloadSchema === undefined
+          ? ''
+          : ', payloads validated'),
     );
   }
 
@@ -248,13 +358,30 @@ class CoreSubscriptionRunner {
   /** Runs the handler for one message; never throws. */
   private async run(message: Msg): Promise<void> {
     const labels = { subscription: this.name };
+    let payload: unknown;
+    const schema = this.settings.payloadSchema;
+    if (schema !== undefined) {
+      const check = checkCorePayload(message, schema);
+      if (!check.valid) {
+        this.metrics.messages.inc({ ...labels, outcome: 'invalid' });
+        const now = performance.now();
+        if (now - this.lastInvalidLogAt >= INVALID_LOG_INTERVAL_MS) {
+          this.lastInvalidLogAt = now;
+          this.logger.warn(
+            `Dropped an invalid message on ${message.subject}: ${check.reason}`,
+          );
+        }
+        return;
+      }
+      payload = check.payload;
+    }
     await this.slots.acquire();
     const startedAt = performance.now();
     let outcome: CoreMessageOutcome = 'handled';
     try {
       await this.runtime.runInLogContext(
         async () => {
-          await this.handler(message);
+          await this.handler(message, payload);
         },
         { subscription: this.name, subject: message.subject },
       );

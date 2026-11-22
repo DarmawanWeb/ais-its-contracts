@@ -4,6 +4,7 @@ export {
   type LoggerSettings,
   loggerSettingsFromConfig,
   type PlatformLoggerOptions,
+  resolvePinoPretty,
 } from './logger.js';
 export {
   buildHttpLoggerParams,
@@ -14,6 +15,7 @@ export {
 export {
   REDACT_PATHS,
   REDACTED,
+  SENSITIVE_ERROR_FIELDS,
   SENSITIVE_FIELDS,
   SENSITIVE_HEADERS,
 } from './redaction.js';

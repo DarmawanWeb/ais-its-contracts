@@ -27,7 +27,7 @@
         "domain": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Domain of the method, e.g. emission, safety, surveillance",
+          "description": "Domain of the method, e.g. emission, safety, surveillance, notification",
           "examples": [
             "ais",
             "emission",
@@ -35,7 +35,9 @@
             "telemetry",
             "geo",
             "safety",
-            "surveillance"
+            "surveillance",
+            "notification",
+            "security"
           ]
         },
         "name": {
@@ -215,8 +217,13 @@
         "status": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9_]*$",
-          "description": "Lifecycle of the method, e.g. implemented, planned, deprecated",
-          "examples": ["implemented", "planned", "deprecated"]
+          "description": "Lifecycle of the method, e.g. implemented, planned, not_implemented, deprecated",
+          "examples": [
+            "implemented",
+            "planned",
+            "not_implemented",
+            "deprecated"
+          ]
         },
         "needsCitation": {
           "default": false,

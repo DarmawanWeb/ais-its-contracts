@@ -24,6 +24,8 @@ export const SUBJECT_FILTERS = {
   AUDIT: 'audit.v1.>',
   DLQ: 'dlq.>',
   TELEMETRY_MQTT: 'aisits.telemetry.*',
+  /** Core NATS (no stream): alert pushes fanned out to every notification instance. */
+  NOTIFICATION_REALTIME: 'aisits.notification.realtime.v1',
 } as const;
 
 /** Prefix of the MQTT topics of fuel meters: `aisits/telemetry/<deviceId>`. */
@@ -140,6 +142,13 @@ export const subjects = {
   telemetryMqtt(deviceId: string): string {
     return `aisits.telemetry.${token(deviceId, 'device id')}`;
   },
+  /**
+   * Core NATS subject of the alert push fan-out between notification
+   * instances (`notification-realtime-fanout`): `aisits.notification.realtime.v1`
+   */
+  notificationRealtime(): string {
+    return SUBJECT_FILTERS.NOTIFICATION_REALTIME;
+  },
 } as const;
 
 /**
@@ -178,6 +187,8 @@ export function subjectForEvent(envelope: AnyEventEnvelope): string {
     case EVENT_TYPES.EMISSION_CII_UPDATED:
       return subjects.ciiUpdated(envelope.data.mmsi);
     case EVENT_TYPES.ALERT_RAISED:
+    case EVENT_TYPES.ALERT_RESOLVED:
+      // The raise's subject: raise and resolve of one occurrence stay ordered.
       return subjects.alert(envelope.data.type, envelope.data.mmsi);
     case EVENT_TYPES.NOTIFY_EMAIL_REQUESTED:
       return subjects.notifyEmail();

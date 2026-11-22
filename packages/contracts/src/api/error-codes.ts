@@ -23,6 +23,15 @@ export const ERROR_DEFINITIONS = {
   INVALID_API_KEY: { status: 401, title: 'Invalid API key' },
   FORBIDDEN: { status: 403, title: 'Forbidden' },
   INSUFFICIENT_SCOPE: { status: 403, title: 'Insufficient API key scope' },
+  /**
+   * The route is restricted to platform administrators (`super_admin`),
+   * whatever the permissions of the organization roles (spec 8.4); raised by
+   * the kit's `@RequirePlatformAdmin()`.
+   */
+  PLATFORM_ADMIN_REQUIRED: {
+    status: 403,
+    title: 'Platform administrator required',
+  },
   ACCOUNT_DISABLED: { status: 403, title: 'Account disabled' },
   NOT_FOUND: { status: 404, title: 'Not found' },
   VESSEL_NOT_FOUND: { status: 404, title: 'Vessel not found' },

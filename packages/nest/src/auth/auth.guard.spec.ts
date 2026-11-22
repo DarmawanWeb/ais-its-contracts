@@ -20,6 +20,7 @@ import {
   Internal,
   Public,
   RequirePermissions,
+  RequirePlatformAdmin,
 } from './decorators.js';
 import { assertOrgAccess, type Principal, UserPrincipal } from './principal.js';
 import { getRequestPrincipal } from './request-principal.js';
@@ -79,6 +80,48 @@ class IngestController {
   }
 }
 
+/** Platform administration routes (CORE-12). */
+class AdminRoutes {
+  @RequirePlatformAdmin()
+  republish(): string {
+    return 'republish';
+  }
+
+  @RequirePlatformAdmin()
+  @RequirePermissions('vessel:write')
+  republishVessel(): string {
+    return 'republish vessel';
+  }
+
+  @RequirePlatformAdmin()
+  @AllowApiKey('ais:ingest')
+  keyed(): string {
+    return 'keyed';
+  }
+}
+
+/** A controller restricted as a whole, with one handler opened again. */
+@RequirePlatformAdmin()
+class AdminController {
+  stats(): string {
+    return 'stats';
+  }
+
+  @Public()
+  health(): string {
+    return 'health';
+  }
+}
+
+/** A public controller with an admin-only handler. */
+@Public()
+class OpenAdminController {
+  @RequirePlatformAdmin()
+  purge(): string {
+    return 'purge';
+  }
+}
+
 /** A WebSocket gateway: one handler opened after the handshake check, one not. */
 class Gateway {
   @Public()
@@ -99,6 +142,9 @@ type Controller =
   | typeof Routes
   | typeof OpenController
   | typeof IngestController
+  | typeof AdminRoutes
+  | typeof AdminController
+  | typeof OpenAdminController
   | typeof Gateway;
 
 function contextFor(
@@ -154,6 +200,70 @@ describe('AuthGuard (global default-deny, spec §8.6)', () => {
       throw error;
     }
   };
+
+  /** The status, or the error code of a denial. */
+  const outcome = async (
+    handler: string,
+    headers: Record<string, string>,
+    controller: Controller,
+  ): Promise<number | string> => {
+    const [context] = contextFor(handler, headers, controller);
+    try {
+      return (await guard.canActivate(context)) ? 200 : 403;
+    } catch (error) {
+      if (error instanceof DomainError) return `${error.status} ${error.code}`;
+      throw error;
+    }
+  };
+
+  it('requires a platform administrator on @RequirePlatformAdmin() routes (CORE-12)', async () => {
+    const superAdmin = {
+      authorization: `Bearer ${await jwt.sign({ roles: ['super_admin'] })}`,
+    };
+    const orgAdmin = {
+      authorization: `Bearer ${await jwt.sign({ roles: ['org_admin'], orgId: ORG })}`,
+    };
+    const manager = {
+      authorization: `Bearer ${await jwt.sign({ roles: ['fleet_manager'], orgId: ORG })}`,
+    };
+    expect(await outcome('republish', superAdmin, AdminRoutes)).toBe(200);
+    expect(await outcome('republish', orgAdmin, AdminRoutes)).toBe(
+      '403 PLATFORM_ADMIN_REQUIRED',
+    );
+    expect(await outcome('republish', {}, AdminRoutes)).toBe(
+      '401 UNAUTHORIZED',
+    );
+    // Combined with permissions: both must hold.
+    expect(await outcome('republishVessel', superAdmin, AdminRoutes)).toBe(200);
+    expect(await outcome('republishVessel', manager, AdminRoutes)).toBe(
+      '403 PLATFORM_ADMIN_REQUIRED',
+    );
+    // API keys are never platform administrators.
+    expect(
+      await outcome('keyed', { 'x-api-key': ingestKey }, AdminRoutes),
+    ).toBe('403 PLATFORM_ADMIN_REQUIRED');
+  });
+
+  it('applies handler-level precedence to @RequirePlatformAdmin()', async () => {
+    const superAdmin = {
+      authorization: `Bearer ${await jwt.sign({ roles: ['super_admin'] })}`,
+    };
+    const orgAdmin = {
+      authorization: `Bearer ${await jwt.sign({ roles: ['org_admin'], orgId: ORG })}`,
+    };
+    expect(await outcome('stats', orgAdmin, AdminController)).toBe(
+      '403 PLATFORM_ADMIN_REQUIRED',
+    );
+    expect(await outcome('stats', superAdmin, AdminController)).toBe(200);
+    expect(await outcome('health', {}, AdminController)).toBe(200);
+    expect(await outcome('purge', {}, OpenAdminController)).toBe(
+      '401 UNAUTHORIZED',
+    );
+    expect(await outcome('purge', orgAdmin, OpenAdminController)).toBe(
+      '403 PLATFORM_ADMIN_REQUIRED',
+    );
+    expect(await outcome('purge', superAdmin, OpenAdminController)).toBe(200);
+  });
 
   it('lets handler-level requirements win over a controller-level @Public()', async () => {
     const admin = await jwt.sign({ roles: ['super_admin'] });

@@ -15,6 +15,7 @@ import { AisRawReceivedV1Schema } from './payloads/ais.js';
 import type { AisPositionRecordedV1 } from './payloads/ais.js';
 import type { AnyEventEnvelope, TypedEventEnvelope } from './registry.js';
 import { typedEnvelopeSchema } from './registry.js';
+import { subjectForEvent } from './subjects.js';
 import {
   EVENT_TYPE_LIST,
   EVENT_TYPES,
@@ -155,6 +156,43 @@ describe('envelope round trip', () => {
       );
       expect(result.envelope.data.domain).toBe('safety');
     }
+  });
+
+  it('round-trips a resolution on the subject of its raise', () => {
+    const raised = makeEnvelope({
+      type: EVENT_TYPES.ALERT_RAISED,
+      source: 'safety',
+      data: EVENT_EXAMPLES['alert.raised.v1'],
+    });
+    const resolution = EVENT_EXAMPLES['alert.resolved.v1'];
+    const resolved = makeEnvelope({
+      type: EVENT_TYPES.ALERT_RESOLVED,
+      source: 'safety',
+      id: resolution.id,
+      data: resolution,
+    });
+    expect(resolved).toMatchObject({
+      id: resolution.id,
+      type: 'alert.resolved.v1',
+      subject: '525005223',
+    });
+    expect(subjectForEvent(resolved)).toBe(subjectForEvent(raised));
+    expect(subjectForEvent(resolved)).toBe('alert.v1.ews.525005223');
+    const result = parseEnvelope(encodeEnvelope(resolved));
+    expect(result).toEqual({ success: true, envelope: resolved });
+    if (result.success && result.envelope.type === EVENT_TYPES.ALERT_RESOLVED) {
+      expectTypeOf(result.envelope.data.resolvedAt).toEqualTypeOf<string>();
+      expectTypeOf(result.envelope.data.reason).toEqualTypeOf<string | null>();
+      expect(result.envelope.data.alertId).toBe(raised.data.id);
+      expect(result.envelope.data.dedupKey).toBe(raised.data.dedupKey);
+    }
+    expect(() =>
+      makeEnvelope({
+        type: EVENT_TYPES.ALERT_RESOLVED,
+        source: 'safety',
+        data: { ...resolution, domain: 'surveillance' },
+      }),
+    ).toThrow(InvalidEventError);
   });
 
   it('strips unknown envelope and payload members', () => {
@@ -310,6 +348,7 @@ describe('envelope schemas and types', () => {
       ['safety.vessel_state.updated.v1', '525005223'],
       ['emission.cii.updated.v1', '525005223'],
       ['alert.raised.v1', '525005223'],
+      ['alert.resolved.v1', '525005223'],
       ['notify.email.requested.v1', 'operator@example.com'],
       ['audit.recorded.v1', '01a1f8c2-54d9-7223-9107-543e8d90de1c'],
     ]);

@@ -18,6 +18,7 @@ import {
 } from './lookup.js';
 import {
   METHOD_DOMAINS,
+  METHOD_STATUSES,
   methodDomainLabel,
   methodStatusLabel,
   referenceTypeLabel,
@@ -229,6 +230,37 @@ describe('shipped catalog lookups', () => {
     expect(getReference('no-such-reference')).toBeUndefined();
     expect(referencesOfMethod('no.such-method')).toEqual([]);
   });
+
+  it('uses only known statuses and domains, with an owner exactly for carried methods', () => {
+    const statuses: readonly string[] = METHOD_STATUSES;
+    const domains: readonly string[] = METHOD_DOMAINS;
+    for (const method of METHODS) {
+      expect(statuses, method.id).toContain(method.status);
+      expect(domains, method.id).toContain(method.domain);
+      if (method.status === 'implemented') {
+        // references:verify checks the module, the symbol and the @method tag.
+        expect(method.implementedBy, method.id).not.toBeNull();
+        expect(method.implementedBy?.module, method.id).toMatch(
+          /^[\w@.\-/]+(?:#[\w$.]+)?(?: \(.+\))?$/,
+        );
+      }
+      if (method.status === 'not_implemented') {
+        expect(method.implementedBy, method.id).toBeNull();
+      }
+    }
+  });
+
+  it('marks every method of the finished services implemented (none is still planned)', () => {
+    expect(METHODS.filter((method) => method.status === 'planned')).toEqual([]);
+    expect(getMethod('collision.cpa_tcpa')?.status).toBe('implemented');
+    expect(getMethod('geo.coast_distance')?.implementedBy).toEqual({
+      service: 'ais-pipeline',
+      module: 'src/shared/domain/coastline.ts#CoastlineGeometry.distanceM',
+    });
+    expect(
+      getMethod('fuel.me_regression_sample')?.implementedBy?.module,
+    ).toMatch(/^src\/seeds\/samples\.seed\.ts#/);
+  });
 });
 
 describe('catalog ids and labels', () => {
@@ -259,6 +291,15 @@ describe('catalog ids and labels', () => {
     expect(methodDomainLabel('safety', 'id')).toBe('Keselamatan navigasi');
     expect(methodDomainLabel('weather')).toBe('weather');
     expect(methodStatusLabel('planned', 'id')).toBe('Direncanakan');
+    expect(methodStatusLabel('not_implemented')).toBe('Not implemented');
+    expect(methodStatusLabel('not_implemented', 'id')).toBe(
+      'Tidak diimplementasikan',
+    );
+    expect(METHOD_DOMAINS).toEqual(
+      expect.arrayContaining(['notification', 'security']),
+    );
+    expect(methodDomainLabel('notification', 'id')).toBe('Notifikasi');
+    expect(methodDomainLabel('security')).toBe('Security');
     expect(referenceTypeLabel('regulation')).toBe('Regulation');
     expect(referenceTypeLabel('toString')).toBe('toString');
     expect(referenceVerificationLabel('unverified', 'id')).toBe(

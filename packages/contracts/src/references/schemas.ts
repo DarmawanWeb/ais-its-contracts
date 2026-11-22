@@ -120,7 +120,11 @@ export function referenceVerificationLabel(
   return vocabularyLabel(REFERENCE_VERIFICATION_LABELS, verification, locale);
 }
 
-/** Domains of the methods known to this version (open vocabulary). */
+/**
+ * Domains of the methods known to this version (open vocabulary):
+ * `notification` covers the alert inbox, alert rules and deliveries,
+ * `security` the authentication and authorization rules.
+ */
 export const METHOD_DOMAINS = [
   'ais',
   'emission',
@@ -129,6 +133,8 @@ export const METHOD_DOMAINS = [
   'geo',
   'safety',
   'surveillance',
+  'notification',
+  'security',
 ] as const;
 
 /** A method domain known to this version. */
@@ -140,7 +146,7 @@ export type MethodDomain = OpenVocabulary<KnownMethodDomain>;
 /** Zod schema of {@link MethodDomain}. */
 export const MethodDomainSchema = openVocabularySchema(
   METHOD_DOMAINS,
-  'Domain of the method, e.g. emission, safety, surveillance',
+  'Domain of the method, e.g. emission, safety, surveillance, notification',
 );
 
 /** Labels of the known method domains. */
@@ -154,6 +160,8 @@ export const METHOD_DOMAIN_LABELS: Readonly<
   geo: { en: 'Geospatial', id: 'Geospasial' },
   safety: { en: 'Navigational safety', id: 'Keselamatan navigasi' },
   surveillance: { en: 'Surveillance', id: 'Pengawasan' },
+  notification: { en: 'Notification', id: 'Notifikasi' },
+  security: { en: 'Security', id: 'Keamanan' },
 };
 
 /** Label of a method domain; unknown domains are shown by their id. */
@@ -164,10 +172,17 @@ export function methodDomainLabel(
   return vocabularyLabel(METHOD_DOMAIN_LABELS, domain, locale);
 }
 
-/** Lifecycle statuses of methods known to this version (open vocabulary). */
+/**
+ * Lifecycle statuses of methods known to this version (open vocabulary):
+ * `implemented` (code carrying the method's `@method` tag exists),
+ * `planned` (to be implemented by its owner), `not_implemented`
+ * (deliberately not carried into the platform, e.g. a display-only rule of
+ * the legacy MVP) and `deprecated` (superseded, kept for traceability).
+ */
 export const METHOD_STATUSES = [
   'implemented',
   'planned',
+  'not_implemented',
   'deprecated',
 ] as const;
 
@@ -180,7 +195,7 @@ export type MethodStatus = OpenVocabulary<KnownMethodStatus>;
 /** Zod schema of {@link MethodStatus}. */
 export const MethodStatusSchema = openVocabularySchema(
   METHOD_STATUSES,
-  'Lifecycle of the method, e.g. implemented, planned, deprecated',
+  'Lifecycle of the method, e.g. implemented, planned, not_implemented, deprecated',
 );
 
 /** Labels of the known method statuses. */
@@ -189,6 +204,7 @@ export const METHOD_STATUS_LABELS: Readonly<
 > = {
   implemented: { en: 'Implemented', id: 'Diimplementasikan' },
   planned: { en: 'Planned', id: 'Direncanakan' },
+  not_implemented: { en: 'Not implemented', id: 'Tidak diimplementasikan' },
   deprecated: { en: 'Deprecated', id: 'Tidak digunakan lagi' },
 };
 

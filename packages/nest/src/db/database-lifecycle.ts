@@ -20,7 +20,13 @@ import { DATABASE_OPTIONS, InjectPool } from './tokens.js';
 export interface DatabaseModuleOptions {
   /** Drizzle schema module (`import * as schema from './db/schema.js'`) for relational queries. */
   readonly schema?: Record<string, unknown> | undefined;
-  /** Directory of the SQL migrations. Default `<cwd>/migrations`. */
+  /**
+   * Directory of the SQL migrations. Default `migrations` resolved against
+   * the working directory of the process (`MigrationsDirectoryNotFoundError`
+   * when it does not exist): pass an absolute path derived from the module,
+   * e.g. `fileURLToPath(new URL('../migrations', import.meta.url))`, so the
+   * service can start from any directory.
+   */
   readonly migrationsDir?: string | undefined;
   /** Overrides `DB_MIGRATE_ON_BOOT`. */
   readonly migrateOnBoot?: boolean | undefined;

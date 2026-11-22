@@ -231,6 +231,45 @@ describe('auth guard (global default-deny)', () => {
     });
   });
 
+  it('reserves @RequirePlatformAdmin() routes to super_admin users (CORE-12)', async () => {
+    const republish = (headers: Record<string, string>) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v2/fixtures/republish',
+        headers,
+      });
+    const orgAdmin = await jwt.sign({ roles: ['org_admin'], orgId: ORG_ID });
+    const denied = await republish({ authorization: `Bearer ${orgAdmin}` });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({
+      status: 403,
+      code: 'PLATFORM_ADMIN_REQUIRED',
+      title: 'Platform administrator required',
+    });
+    const { token, principal } = await jwt.issue({ roles: ['super_admin'] });
+    const allowed = await republish({ authorization: `Bearer ${token}` });
+    expect(allowed.statusCode).toBe(202);
+    expect(allowed.json()).toEqual({ republishedBy: principal.id });
+    const key = await republish({ 'x-api-key': ingestKey });
+    expect(key.statusCode).toBe(403);
+    expect(key.json()).toMatchObject({ code: 'PLATFORM_ADMIN_REQUIRED' });
+    expect((await republish({})).statusCode).toBe(401);
+
+    const document = (
+      await app.inject({ method: 'GET', url: '/openapi.json' })
+    ).json<{
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    }>();
+    const operation = document.paths['/api/v2/fixtures/republish']?.post;
+    expect(operation).toMatchObject({
+      summary: 'Republish',
+      'x-required-roles': ['super_admin'],
+    });
+    expect(operation?.description).toBe(
+      'Re-sends every snapshot.\n\nRequires a platform administrator (super_admin); other users and API keys get 403 PLATFORM_ADMIN_REQUIRED.',
+    );
+  });
+
   it('still lets users with the permission call @AllowApiKey routes', async () => {
     const token = await jwt.sign({ roles: ['fleet_manager'], orgId: ORG_ID });
     const response = await app.inject({

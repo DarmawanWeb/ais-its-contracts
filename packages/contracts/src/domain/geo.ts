@@ -68,6 +68,8 @@ const degreesToRadians = (degrees: number): number => degrees * (Math.PI / 180);
  * Numerically identical to the legacy `calculateDistance` (same constant and
  * the same order of floating point operations), so CII segment distances keep
  * parity with the MVP.
+ *
+ * @method geo.haversine_distance
  */
 export function haversineDistance(from: GeoPoint, to: GeoPoint): Distance {
   const fromLat = degreesToRadians(from.lat);

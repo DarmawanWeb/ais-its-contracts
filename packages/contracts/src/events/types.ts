@@ -13,6 +13,7 @@ export const EVENT_TYPES = {
   SAFETY_VESSEL_STATE_UPDATED: 'safety.vessel_state.updated.v1',
   EMISSION_CII_UPDATED: 'emission.cii.updated.v1',
   ALERT_RAISED: 'alert.raised.v1',
+  ALERT_RESOLVED: 'alert.resolved.v1',
   NOTIFY_EMAIL_REQUESTED: 'notify.email.requested.v1',
   AUDIT_RECORDED: 'audit.recorded.v1',
 } as const;

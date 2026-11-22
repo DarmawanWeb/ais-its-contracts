@@ -10,6 +10,7 @@ import {
 } from '@darmawanweb/ais-its-contracts/api';
 import { HttpException } from '@nestjs/common';
 
+import { safeErrorMessage } from '../db/errors.js';
 import { DomainError } from './domain-error.js';
 
 /** Request facts added to every problem. */
@@ -22,7 +23,9 @@ export interface ProblemContext {
   readonly traceId?: string | undefined;
   /**
    * Whether messages of unexpected (5xx) errors may be sent to the client.
-   * `false` in production: clients only see a generic detail.
+   * `false` in production: clients only see a generic detail. A database
+   * error then shows the driver's primary message only, never drizzle's
+   * `Failed query: … params: …` or the driver's `detail`.
    */
   readonly exposeInternalErrors: boolean;
 }
@@ -139,7 +142,9 @@ function frameworkStatus(error: unknown): number | undefined {
  * {@link DomainError}s keep their code, status and extensions; Nest
  * `HttpException`s and framework errors with a 4xx `statusCode` (Fastify)
  * get the code of their status; anything else is `500 INTERNAL_ERROR`, with a generic detail unless
- * `context.exposeInternalErrors`. Stacks are never part of the body.
+ * `context.exposeInternalErrors` (then the error message; for a database
+ * error the driver's primary message, without bound values). Stacks are
+ * never part of the body.
  */
 export function toProblemResponse(
   error: unknown,
@@ -211,7 +216,7 @@ export function toProblemResponse(
 
   const detail =
     context.exposeInternalErrors && error instanceof Error
-      ? error.message
+      ? safeErrorMessage(error)
       : 'An unexpected error occurred';
   return {
     status: 500,

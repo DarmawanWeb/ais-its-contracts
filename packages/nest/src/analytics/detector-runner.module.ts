@@ -48,6 +48,13 @@ import { ZoneIndex } from './zone-index.js';
 /** Attempts of an alert publication before the error reaches the detector. */
 const PUBLISH_ATTEMPTS_DEADLINE_MS = 5_000;
 
+/** Retry schedule of alert and resolution publications (same event id: deduplicated). */
+const PUBLISH_RETRY = {
+  deadlineMs: PUBLISH_ATTEMPTS_DEADLINE_MS,
+  initialDelayMs: 200,
+  maxDelayMs: 2_000,
+} as const;
+
 type Clock = () => Date;
 
 /**
@@ -59,6 +66,11 @@ type Clock = () => Date;
  * {@link DetectorRunner}. Requires `NatsModule` (and `RedisModule` when
  * `vesselState.mirror` is on). Global: every provider is exported, so any
  * controller can inject e.g. `DetectorRegistry` for `GET …/detectors`.
+ *
+ * The persistence hook is provided under the `ALERT_PERSISTENCE` token; a
+ * `{ useClass: X }` hook is also provided as `X` (one instance), so tests
+ * can `app.get(X)`. Resolutions are published as `alert.resolved.v1`
+ * unless `publishResolutions: false`.
  *
  * @example
  * DetectorRunnerModule.forRoot({
@@ -85,6 +97,22 @@ export interface DetectorRunnerModuleAsyncOptions {
   readonly imports?: ModuleMetadata['imports'];
   /** The service's event repository hook (static: it is a provider). */
   readonly persistence?: ProviderDefinition<AlertPersistence> | undefined;
+}
+
+/**
+ * Providers of the persistence hook: `ALERT_PERSISTENCE`, plus the class
+ * itself for `{ useClass: X }` (aliased, so both tokens give one instance).
+ */
+function persistenceProviders(
+  definition: ProviderDefinition<AlertPersistence>,
+): Provider[] {
+  if (!('useClass' in definition))
+    return [provideAs(ALERT_PERSISTENCE, definition)];
+  const { useClass, ...rest } = definition;
+  return [
+    { ...rest, provide: useClass, useClass },
+    { provide: ALERT_PERSISTENCE, useExisting: useClass },
+  ];
 }
 
 @Module({})
@@ -203,6 +231,7 @@ export class DetectorRunnerModule {
           new AlertEmitter({
             clock,
             cooldownMs: options.alertCooldownMs,
+            repeatedIntervalMs: options.alertRepeatedIntervalMs,
             persistence: alertPersistence,
             publish: async (alert) => {
               // Same id for the envelope: retries are deduplicated by JetStream.
@@ -211,13 +240,24 @@ export class DetectorRunnerModule {
                   publisher.publishEvent(EVENT_TYPES.ALERT_RAISED, alert, {
                     id: alert.id,
                   }),
-                {
-                  deadlineMs: PUBLISH_ATTEMPTS_DEADLINE_MS,
-                  initialDelayMs: 200,
-                  maxDelayMs: 2_000,
-                },
+                PUBLISH_RETRY,
               );
             },
+            // On the raise's subject alert.v1.<type>.<mmsi>, after the raise.
+            publishResolution:
+              options.publishResolutions === false
+                ? undefined
+                : async (event) => {
+                    await retryUntilDeadline(
+                      () =>
+                        publisher.publishEvent(
+                          EVENT_TYPES.ALERT_RESOLVED,
+                          event,
+                          { id: event.id },
+                        ),
+                      PUBLISH_RETRY,
+                    );
+                  },
           }),
         inject: [
           DETECTOR_RUNNER_OPTIONS,
@@ -298,7 +338,7 @@ export class DetectorRunnerModule {
       DetectorRunner,
     ];
     if (persistence !== undefined)
-      providers.push(provideAs(ALERT_PERSISTENCE, persistence));
+      providers.push(...persistenceProviders(persistence));
     return {
       module: DetectorRunnerModule,
       global: true,

@@ -50,6 +50,9 @@ export interface EventHandlerOptions<Ref extends DurableConsumerRef> {
   /**
    * With `concurrency > 1`, messages of the same NATS subject (same vessel)
    * are still handled one after the other, in stream order. Default `true`.
+   * On a consumer whose messages all share one subject (a filter without
+   * wildcards, e.g. `notify.email.v1`) this serializes everything: set it
+   * to `false` there (the consumer logs a warning at start).
    */
   readonly orderBySubject?: boolean | undefined;
   /** Deliveries before dead-lettering. Default: the definition's `maxDeliver` (10). */
@@ -69,16 +72,83 @@ export interface EventHandlerOptions<Ref extends DurableConsumerRef> {
   /**
    * Single active instance: with several replicas only one receives
    * messages; the others stand by and take over when it stops pulling for
-   * `pinnedTtlMs` (NATS ≥ 2.11 priority group, policy `pinned_client`).
-   * Use it for handlers that keep per-entity state in memory. Default `false`.
+   * `pinnedTtlMs` (NATS ≥ 2.11 priority group, policy `pinned_client`), at
+   * once when it stops gracefully (the pin is released). Use it for
+   * handlers that keep per-entity state in memory; the provider may
+   * implement {@link ExclusiveConsumerListener} to reload that state when
+   * its instance becomes active. Default `false`.
    */
   readonly exclusive?: boolean | ExclusiveConsumerOptions | undefined;
 }
 
 /** Options of an exclusive (single active instance) consumer. */
 export interface ExclusiveConsumerOptions {
-  /** Time without pulls after which the server hands the consumer to a standby, ms. Default 30 s. */
+  /**
+   * Time without pulls after which the server hands the consumer to a
+   * standby, ms. Default 30 s. The consumer pulls every `pinnedTtlMs / 3`
+   * (at most 30 s) to keep its pin while idle; values below 3 000 ms log a
+   * warning (the pin may be lost while idle).
+   */
   readonly pinnedTtlMs?: number | undefined;
+}
+
+/**
+ * Why an exclusive consumer instance changed role: `pinned` (it became the
+ * active instance), `unpinned` (another instance took over) or `stopped`
+ * (graceful stop; the pin is released next).
+ */
+export type ExclusiveConsumerTransition = 'pinned' | 'unpinned' | 'stopped';
+
+/** Passed to the activation hooks of an exclusive consumer. */
+export interface ExclusiveConsumerEvent {
+  /** Durable consumer name (with `NATS_DURABLE_PREFIX`). */
+  readonly consumer: string;
+  /** Stream of the consumer. */
+  readonly stream: string;
+  /**
+   * `Nats-Pin-Id` of the active period that starts (activation) or ends
+   * (deactivation).
+   */
+  readonly pinId: string | undefined;
+  /**
+   * Pin id of the active period this instance knew before (`undefined` on
+   * its first activation): any value means another instance may have been
+   * active in between, so in-memory state must be reloaded.
+   */
+  readonly previous: string | undefined;
+  /** What changed (see {@link ExclusiveConsumerTransition}). */
+  readonly reason: ExclusiveConsumerTransition;
+}
+
+/**
+ * Optional lifecycle hooks of a provider whose `@EventHandler` consumer is
+ * `exclusive`. The kit calls them on the provider instance (the `consumer`
+ * field tells consumers of one provider apart), one at a time:
+ *
+ * - `onConsumerActivated` when this instance becomes the active one: the
+ *   message that revealed the new pin and every later message wait until
+ *   it settles, so state reloaded here (open alerts, per-vessel caches) is
+ *   in place before the first message of the active period. When it
+ *   rejects, those messages are nak'd with backoff (redelivered, never
+ *   lost) and the hook runs again on the next message.
+ * - `onConsumerDeactivated` when another instance took over (after the
+ *   handlers of the ended period settled) or before a graceful stop
+ *   releases the pin (flush state here). Errors are logged and ignored.
+ *
+ * @example
+ * @Injectable()
+ * export class ProcessorConsumer implements ExclusiveConsumerListener {
+ *   @EventHandler({ consumer: 'ais-processor', exclusive: true })
+ *   async onReport(event: ConsumerEnvelope<'ais-processor'>) { … }
+ *
+ *   async onConsumerActivated(): Promise<void> {
+ *     await this.state.reloadFromStore();
+ *   }
+ * }
+ */
+export interface ExclusiveConsumerListener {
+  onConsumerActivated?(event: ExclusiveConsumerEvent): void | Promise<void>;
+  onConsumerDeactivated?(event: ExclusiveConsumerEvent): void | Promise<void>;
 }
 
 /** Normalized {@link ExclusiveConsumerOptions}. */

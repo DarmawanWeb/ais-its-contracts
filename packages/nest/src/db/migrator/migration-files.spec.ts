@@ -1,10 +1,16 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   migrationChecksum,
   MigrationFileError,
+  MigrationsDirectoryNotFoundError,
   NO_TRANSACTION_MARKER,
   parseMigration,
+  readMigrationFiles,
 } from './migration-files.js';
 import { migrationLockKey } from './migrator.js';
 import { splitSqlStatements } from './sql-splitter.js';
@@ -48,6 +54,38 @@ describe('migration files (spec §6)', () => {
         .transactional,
     ).toBe(true);
     expect(migrationLockKey('safety')).toBe('aisits.migrations:safety');
+  });
+
+  it('names the resolved directory and the working directory when it is missing (CORE-19)', async () => {
+    const error = await readMigrationFiles('missing-migrations-dir').catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(MigrationsDirectoryNotFoundError);
+    expect(error).toBeInstanceOf(MigrationFileError);
+    expect(error).toMatchObject({
+      name: 'MigrationsDirectoryNotFoundError',
+      directory: resolve('missing-migrations-dir'),
+      cwd: process.cwd(),
+    });
+    expect((error as Error).message).toContain(
+      resolve('missing-migrations-dir'),
+    );
+    expect((error as Error).message).toContain('migrationsDir');
+
+    const dir = await mkdtemp(join(tmpdir(), 'kit-migrations-'));
+    try {
+      const file = join(dir, 'not-a-directory');
+      await writeFile(file, '');
+      await expect(readMigrationFiles(file)).rejects.toBeInstanceOf(
+        MigrationsDirectoryNotFoundError,
+      );
+      await writeFile(join(dir, '0001_init.sql'), 'SELECT 1;');
+      expect(
+        (await readMigrationFiles(dir)).map((migration) => migration.name),
+      ).toEqual(['init']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

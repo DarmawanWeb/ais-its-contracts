@@ -41,8 +41,16 @@ import type * as z from 'zod';
 import { ValidationFailedError } from '../errors/domain-error.js';
 
 /**
- * Query of page-based CRUD lists (spec §5): `page` ≥ 1 (default 1),
- * `pageSize` 1–100 (default 20). Extend it with the list's filters.
+ * Largest accepted `page` of page-based lists: 1 000 000 pages of up to 100
+ * items keep `OFFSET` far inside PostgreSQL's `bigint`, while an unbounded
+ * page (`page=99999999999999999999`) would overflow it and answer `500`.
+ */
+export const MAX_PAGE = 1_000_000;
+
+/**
+ * Query of page-based CRUD lists (spec §5): `page` 1–{@link MAX_PAGE}
+ * (default 1), `pageSize` 1–100 (default 20). Extend it with the list's
+ * filters.
  *
  * @example
  * class ListVesselsQuery extends PageQueryDto {
@@ -52,10 +60,16 @@ import { ValidationFailedError } from '../errors/domain-error.js';
  * list(@Query() query: ListVesselsQuery): Promise<Paginated<VesselDto>> { … }
  */
 export class PageQueryDto {
-  @ApiPropertyOptional({ minimum: 1, default: 1, type: 'integer' })
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: MAX_PAGE,
+    default: 1,
+    type: 'integer',
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(MAX_PAGE)
   readonly page: number = 1;
 
   @ApiPropertyOptional({
@@ -208,11 +222,33 @@ export function paginate<T>(
   return toPaginated(data, query, total);
 }
 
-/** Zero-based row offset of a page query (`(page - 1) * pageSize`). */
+/**
+ * Zero-based row offset of a page query (`(page - 1) * pageSize`).
+ *
+ * @throws {RangeError} when `page` or `pageSize` is not a positive safe
+ *   integer or the offset is not a safe integer (a query that bypassed
+ *   {@link PageQueryDto}'s validation).
+ */
 export function pageOffsetOf(
   query: Pick<PageQueryDto, 'page' | 'pageSize'>,
 ): number {
-  return (query.page - 1) * query.pageSize;
+  const { page, pageSize } = query;
+  if (
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1
+  ) {
+    throw new RangeError(
+      `Invalid page query (page ${page}, pageSize ${pageSize}): both must be positive integers`,
+    );
+  }
+  const offset = (page - 1) * pageSize;
+  if (!Number.isSafeInteger(offset))
+    throw new RangeError(
+      `The offset of page ${page} (pageSize ${pageSize}) is not a safe integer`,
+    );
+  return offset;
 }
 
 /**
@@ -260,7 +296,7 @@ export function decodeQueryCursor<Schema extends z.ZodType>(
 
 /** OpenAPI model of `meta` in page-based lists. */
 export class PageMetaDto {
-  @ApiProperty({ minimum: 1, type: 'integer' })
+  @ApiProperty({ minimum: 1, maximum: MAX_PAGE, type: 'integer' })
   readonly page!: number;
 
   @ApiProperty({ minimum: 1, maximum: MAX_PAGE_SIZE, type: 'integer' })

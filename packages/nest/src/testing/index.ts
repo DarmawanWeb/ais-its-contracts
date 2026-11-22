@@ -1,7 +1,10 @@
 /**
- * Test helpers of the platform (requires the optional peers `testcontainers`
- * and `@nestjs/testing`): containers, schema provisioning, a JWT issuer, fake
- * API key introspection, test applications, envelopes and polling.
+ * Test helpers of the platform: containers, schema provisioning, a JWT
+ * issuer, fake API key introspection, test applications, envelopes,
+ * payload builders (zones, vessels, alerts) and polling. They import
+ * `testcontainers` and `@nestjs/testing`, which resolve from the service's
+ * own devDependencies (both are in the service template); they are not
+ * dependencies of the kit, so production installs do not contain them.
  *
  * @packageDocumentation
  */
@@ -13,12 +16,20 @@ export {
   startFakeApiKeyIntrospection,
 } from './api-key-introspection.js';
 export {
+  makeTestAlertRaised,
+  makeTestAlertResolved,
+  makeTestVesselSnapshot,
+  makeTestZone,
+  type TestZoneInput,
+} from './fixtures.js';
+export {
   makeTestEnvelope,
   type TestEnvelopeOptions,
   waitFor,
   type WaitForOptions,
 } from './helpers.js';
 export {
+  DEFAULT_TEST_NATS_MAX_PAYLOAD,
   reapOrphanedTestContainers,
   type StartedTestInfra,
   startTestInfra,
@@ -28,6 +39,8 @@ export {
   TEST_S3_CREDENTIALS,
   type TestInfraOptions,
   type TestNats,
+  testNatsConfig,
+  type TestNatsOptions,
   type TestPostgres,
   type TestRedis,
   type TestS3,

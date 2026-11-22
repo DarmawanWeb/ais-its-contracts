@@ -25,48 +25,114 @@ export interface DurableConsumerDefinition {
   readonly description: string;
 }
 
-const fleetProjection = (
-  durableName: string,
-  service: ServiceName,
-): DurableConsumerDefinition => ({
-  durableName,
-  stream: 'FLEET',
-  filterSubjects: [SUBJECT_FILTERS.FLEET_VESSEL],
-  service,
-  eventTypes: [
-    EVENT_TYPES.FLEET_VESSEL_UPSERTED,
-    EVENT_TYPES.FLEET_VESSEL_DELETED,
-  ],
-  maxDeliver: DEFAULT_MAX_DELIVER,
-  description: `Vessel projection (mmsi → vesselId, orgId) of ${service}.`,
-});
+/**
+ * Declares a durable consumer and keeps its literal types: `eventTypes` stays
+ * a tuple of event type literals (and `durableName`, `stream` and `service`
+ * their literal values), so the kit's `ConsumerEnvelope<typeof definition>`
+ * is the union of exactly those events and a `switch (event.type)` can be
+ * exhaustive. Use it for consumers that {@link CONSUMERS} does not list yet,
+ * e.g. in a service generated from the template; annotating a definition
+ * with `: DurableConsumerDefinition` instead widens `eventTypes` to every
+ * event type. The definition is returned unchanged.
+ *
+ * @example
+ * export const SPEED_LIMIT_ALERTS = defineDurableConsumer({
+ *   durableName: 'speed-limit-alerts',
+ *   stream: 'ALERTS',
+ *   filterSubjects: [SUBJECT_FILTERS.ALERT],
+ *   service: 'speed-limit',
+ *   eventTypes: [EVENT_TYPES.ALERT_RAISED, EVENT_TYPES.ALERT_RESOLVED],
+ *   maxDeliver: DEFAULT_MAX_DELIVER,
+ *   description: 'Keeps the speed limit dashboard in sync with the alerts.',
+ * });
+ */
+export function defineDurableConsumer<
+  const Definition extends DurableConsumerDefinition,
+>(definition: Definition): Definition {
+  return definition;
+}
 
-const zoneProjection = (
-  durableName: string,
-  service: ServiceName,
-): DurableConsumerDefinition => ({
-  durableName,
-  stream: 'GEO',
-  filterSubjects: [SUBJECT_FILTERS.GEO_ZONE],
-  service,
-  eventTypes: [EVENT_TYPES.GEO_ZONE_UPSERTED, EVENT_TYPES.GEO_ZONE_DELETED],
-  maxDeliver: DEFAULT_MAX_DELIVER,
-  description: `Zone projection with a spatial index (ZoneIndex) of ${service}.`,
-});
+/**
+ * Durable consumer of the AIS position feed (stream `AIS_POSITION`, every
+ * partition) delivering exactly `ais.position.recorded.v1`, with literal
+ * types (see {@link defineDurableConsumer}).
+ *
+ * @param durableName - durable name, e.g. `"speed-limit-positions"`
+ * @param service - service owning (and ensuring) the consumer
+ * @param description - what the service does with the positions
+ *
+ * @example
+ * export const POSITIONS_CONSUMER = positionFeedConsumer(
+ *   'speed-limit-positions',
+ *   'speed-limit',
+ *   'Feeds the speed limit detector.',
+ * );
+ */
+export function positionFeedConsumer<
+  const Name extends string,
+  const Service extends string,
+>(durableName: Name, service: Service, description: string) {
+  return {
+    durableName,
+    stream: 'AIS_POSITION',
+    filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
+    service,
+    eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
+    maxDeliver: DEFAULT_MAX_DELIVER,
+    description,
+  } as const satisfies DurableConsumerDefinition;
+}
 
-const positionFeed = (
-  durableName: string,
-  service: ServiceName,
-  description: string,
-): DurableConsumerDefinition => ({
-  durableName,
-  stream: 'AIS_POSITION',
-  filterSubjects: [SUBJECT_FILTERS.AIS_POSITION],
-  service,
-  eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
-  maxDeliver: DEFAULT_MAX_DELIVER,
-  description,
-});
+/**
+ * Durable consumer of the vessel projection (stream `FLEET`) delivering
+ * exactly `fleet.vessel.upserted.v1` and `fleet.vessel.deleted.v1`, with
+ * literal types (see {@link defineDurableConsumer}). The service keeps
+ * mmsi → vesselId, orgId from it.
+ *
+ * @param durableName - durable name, e.g. `"speed-limit-fleet"`
+ * @param service - service owning (and ensuring) the consumer
+ */
+export function fleetProjectionConsumer<
+  const Name extends string,
+  const Service extends string,
+>(durableName: Name, service: Service) {
+  return {
+    durableName,
+    stream: 'FLEET',
+    filterSubjects: [SUBJECT_FILTERS.FLEET_VESSEL],
+    service,
+    eventTypes: [
+      EVENT_TYPES.FLEET_VESSEL_UPSERTED,
+      EVENT_TYPES.FLEET_VESSEL_DELETED,
+    ],
+    maxDeliver: DEFAULT_MAX_DELIVER,
+    description: `Vessel projection (mmsi → vesselId, orgId) of ${service}.`,
+  } as const satisfies DurableConsumerDefinition;
+}
+
+/**
+ * Durable consumer of the zone projection (stream `GEO`) delivering exactly
+ * `geo.zone.upserted.v1` and `geo.zone.deleted.v1`, with literal types (see
+ * {@link defineDurableConsumer}). The service keeps a spatial index
+ * (`ZoneIndex`) from it.
+ *
+ * @param durableName - durable name, e.g. `"speed-limit-zones"`
+ * @param service - service owning (and ensuring) the consumer
+ */
+export function zoneProjectionConsumer<
+  const Name extends string,
+  const Service extends string,
+>(durableName: Name, service: Service) {
+  return {
+    durableName,
+    stream: 'GEO',
+    filterSubjects: [SUBJECT_FILTERS.GEO_ZONE],
+    service,
+    eventTypes: [EVENT_TYPES.GEO_ZONE_UPSERTED, EVENT_TYPES.GEO_ZONE_DELETED],
+    maxDeliver: DEFAULT_MAX_DELIVER,
+    description: `Zone projection with a spatial index (ZoneIndex) of ${service}.`,
+  } as const satisfies DurableConsumerDefinition;
+}
 
 /** Every durable consumer of spec 7.3, keyed by durable name. */
 export const CONSUMERS = {
@@ -79,17 +145,17 @@ export const CONSUMERS = {
     maxDeliver: DEFAULT_MAX_DELIVER,
     description: 'Enriches and records raw AIS reports.',
   },
-  'emission-positions': positionFeed(
+  'emission-positions': positionFeedConsumer(
     'emission-positions',
     'emission',
     'Builds voyage segments (fuel, CO2, CII) from positions.',
   ),
-  'safety-positions': positionFeed(
+  'safety-positions': positionFeedConsumer(
     'safety-positions',
     'safety',
     'Feeds the navigational safety detectors (ews, collision).',
   ),
-  'surveillance-positions': positionFeed(
+  'surveillance-positions': positionFeedConsumer(
     'surveillance-positions',
     'surveillance',
     'Feeds the surveillance detectors (transhipment, anomaly, dark, geofence, fishing).',
@@ -103,26 +169,37 @@ export const CONSUMERS = {
     maxDeliver: DEFAULT_MAX_DELIVER,
     description: 'Telemetry fuel readings for segment fuel estimation.',
   },
-  'emission-fleet': fleetProjection('emission-fleet', 'emission'),
-  'safety-fleet': fleetProjection('safety-fleet', 'safety'),
-  'surveillance-fleet': fleetProjection('surveillance-fleet', 'surveillance'),
-  'notification-fleet': fleetProjection('notification-fleet', 'notification'),
-  'telemetry-fleet': fleetProjection('telemetry-fleet', 'telemetry'),
-  'ais-processor-fleet': fleetProjection(
+  'emission-fleet': fleetProjectionConsumer('emission-fleet', 'emission'),
+  'safety-fleet': fleetProjectionConsumer('safety-fleet', 'safety'),
+  'surveillance-fleet': fleetProjectionConsumer(
+    'surveillance-fleet',
+    'surveillance',
+  ),
+  'notification-fleet': fleetProjectionConsumer(
+    'notification-fleet',
+    'notification',
+  ),
+  'telemetry-fleet': fleetProjectionConsumer('telemetry-fleet', 'telemetry'),
+  'ais-processor-fleet': fleetProjectionConsumer(
     'ais-processor-fleet',
     'ais-processor',
   ),
-  'safety-zones': zoneProjection('safety-zones', 'safety'),
-  'surveillance-zones': zoneProjection('surveillance-zones', 'surveillance'),
+  'safety-zones': zoneProjectionConsumer('safety-zones', 'safety'),
+  'surveillance-zones': zoneProjectionConsumer(
+    'surveillance-zones',
+    'surveillance',
+  ),
   'notification-alerts': {
     durableName: 'notification-alerts',
     stream: 'ALERTS',
     filterSubjects: [SUBJECT_FILTERS.ALERT],
     service: 'notification',
-    eventTypes: [EVENT_TYPES.ALERT_RAISED],
+    // One durable for both types keeps the raise → resolve order of an
+    // occurrence (same subject); a separate resolution consumer would race.
+    eventTypes: [EVENT_TYPES.ALERT_RAISED, EVENT_TYPES.ALERT_RESOLVED],
     maxDeliver: DEFAULT_MAX_DELIVER,
     description:
-      'Stores alerts in the inbox, applies alert rules and pushes them to clients.',
+      'Stores alerts in the inbox, applies alert rules and pushes them to clients; resolves them on alert.resolved.v1.',
   },
   'notification-email': {
     durableName: 'notification-email',
@@ -202,24 +279,70 @@ export type OrderedConsumerName = keyof typeof ORDERED_CONSUMERS;
 export const ORDERED_CONSUMER_LIST: readonly OrderedConsumerDefinition[] =
   Object.values(ORDERED_CONSUMERS);
 
+/**
+ * How the replicas of a service share the messages of a core subscription:
+ *
+ * - `queue` — one replica receives each message (queue group, load sharing);
+ * - `fanout` — every replica receives every message (no queue group), e.g.
+ *   to reach the socket clients connected to each instance.
+ */
+export const CORE_SUBSCRIPTION_DELIVERIES = ['queue', 'fanout'] as const;
+
+/** Delivery mode of a core subscription (see {@link CORE_SUBSCRIPTION_DELIVERIES}). */
+export type CoreSubscriptionDelivery =
+  (typeof CORE_SUBSCRIPTION_DELIVERIES)[number];
+
+/** Delivery mode of a core subscription that declares none. */
+export const DEFAULT_CORE_SUBSCRIPTION_DELIVERY: CoreSubscriptionDelivery =
+  'queue';
+
 /** A core NATS (non JetStream) subscription. */
 export interface CoreSubscriptionDefinition {
   readonly name: string;
   readonly subject: string;
   readonly service: OpenVocabulary<ServiceName>;
+  /**
+   * How the replicas of `service` share the messages; default
+   * {@link DEFAULT_CORE_SUBSCRIPTION_DELIVERY} (`queue`). The payload schema
+   * of a contracts subscription is `CORE_SUBSCRIPTION_PAYLOADS[name]` of
+   * `./realtime`.
+   */
+  readonly delivery?: CoreSubscriptionDelivery | undefined;
   readonly description: string;
 }
 
-/** Core NATS subscriptions of spec 7.3. */
+/**
+ * Core NATS subscriptions of spec 7.3. Core NATS has no persistence and no
+ * redelivery: a message published while no subscriber listens is lost.
+ */
 export const CORE_SUBSCRIPTIONS: readonly CoreSubscriptionDefinition[] = [
   {
     name: 'telemetry-mqtt',
     subject: SUBJECT_FILTERS.TELEMETRY_MQTT,
     service: 'telemetry',
+    delivery: 'queue',
     description:
       'Raw device JSON from MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway).',
   },
+  {
+    name: 'notification-realtime-fanout',
+    subject: SUBJECT_FILTERS.NOTIFICATION_REALTIME,
+    service: 'notification',
+    delivery: 'fanout',
+    description:
+      'alert:raised / alert:updated pushes fanned out to every notification instance (Socket.IO rooms).',
+  },
 ];
+
+/**
+ * Delivery mode of a core subscription: its `delivery`, or
+ * {@link DEFAULT_CORE_SUBSCRIPTION_DELIVERY} when it declares none.
+ */
+export function coreSubscriptionDelivery(
+  definition: Pick<CoreSubscriptionDefinition, 'delivery'>,
+): CoreSubscriptionDelivery {
+  return definition.delivery ?? DEFAULT_CORE_SUBSCRIPTION_DELIVERY;
+}
 
 /** Durable consumers owned by a service. */
 export function consumersOfService(

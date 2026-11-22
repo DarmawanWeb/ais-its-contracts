@@ -1,4 +1,8 @@
-import { NonRetryableError, RetryableError } from './errors.js';
+import {
+  DeadLetterError,
+  NonRetryableError,
+  RetryableError,
+} from './errors.js';
 
 /** First retry delay of the default exponential backoff, ms. */
 export const DEFAULT_INITIAL_BACKOFF_MS = 1000;
@@ -24,7 +28,7 @@ export type FailureDecision =
   | { readonly action: 'nak'; readonly delayMs: number }
   /** Never redeliver (`NonRetryableError`). */
   | { readonly action: 'term' }
-  /** Copy to `dlq.<stream>.<consumer>` and ack (deliveries exhausted). */
+  /** Copy to `dlq.<stream>.<consumer>` and ack (deliveries exhausted, or `DeadLetterError`). */
   | { readonly action: 'dead_letter' };
 
 /**
@@ -49,15 +53,17 @@ export function retryDelayMs(
 }
 
 /**
- * Decides the fate of a failed delivery (spec §7.1): `NonRetryableError` →
- * term; deliveries exhausted (`deliveryCount >= maxDeliver`) → dead letter;
- * otherwise nak with backoff (`RetryableError.retryAfterMs` wins).
+ * Decides the fate of a failed delivery (spec §7.1): `DeadLetterError` →
+ * dead letter on any delivery; `NonRetryableError` → term; deliveries
+ * exhausted (`deliveryCount >= maxDeliver`) → dead letter; otherwise nak
+ * with backoff (`RetryableError.retryAfterMs` wins).
  */
 export function decideFailure(
   error: unknown,
   deliveryCount: number,
   policy: DeliveryPolicy,
 ): FailureDecision {
+  if (error instanceof DeadLetterError) return { action: 'dead_letter' };
   if (error instanceof NonRetryableError) return { action: 'term' };
   if (deliveryCount >= policy.maxDeliver) return { action: 'dead_letter' };
   if (error instanceof RetryableError && error.retryAfterMs !== undefined) {

@@ -1,7 +1,8 @@
 /**
  * Domain vocabulary shared by every service and the web app: AIS codes and
  * labels, EWS and collision risk, the alert type registry, zones and GeoJSON
- * geometries, CII grades, geodesy, units and ids.
+ * geometries, CII grades, the first-fuel-formula language, geodesy, units and
+ * ids.
  *
  * @packageDocumentation
  */
@@ -10,6 +11,7 @@ export * from './alerts.js';
 export * from './audit.js';
 export * from './cii.js';
 export * from './ews.js';
+export * from './fuel-formula.js';
 export * from './geo.js';
 export * from './geojson.js';
 export * from './id.js';

@@ -16,7 +16,11 @@ import { connect, type NatsConnection } from '@nats-io/transport-node';
 import { errorMessage, retryUntilDeadline } from '../common/retry.js';
 import { InjectConfig } from '../config/config.module.js';
 import type { BaseConfig } from '../config/env-schema.js';
-import { NATS_OPTIONS, type NatsModuleOptions } from './nats.options.js';
+import {
+  DEFAULT_MIN_MAX_PAYLOAD_BYTES,
+  NATS_OPTIONS,
+  type NatsModuleOptions,
+} from './nats.options.js';
 
 /** Thrown when the connection is used before `onModuleInit` connected it. */
 export class NatsNotConnectedError extends Error {
@@ -84,6 +88,15 @@ export class NatsClient implements OnModuleInit, OnApplicationShutdown {
     return this.current().manager;
   }
 
+  /**
+   * The largest message the connected server accepts (`max_payload` of its
+   * INFO, headers included), bytes; `undefined` before `ready()` resolved.
+   * `EventPublisher` refuses larger events with `EventTooLargeError`.
+   */
+  maxPayloadBytes(): number | undefined {
+    return this.handles?.connection.info?.max_payload;
+  }
+
   /** `true` while connected to a server (not while reconnecting or closed). */
   isConnected(): boolean {
     return (
@@ -137,6 +150,7 @@ export class NatsClient implements OnModuleInit, OnApplicationShutdown {
     );
     this.connected = true;
     this.logger.log(`Connected to NATS ${connection.getServer()}`);
+    this.checkMaxPayload(connection);
     void this.watch(connection);
 
     const timeout = this.options.requestTimeoutMs ?? 10_000;
@@ -146,6 +160,19 @@ export class NatsClient implements OnModuleInit, OnApplicationShutdown {
       manager: await jetstreamManager(connection, { timeout }),
     };
     return this.handles;
+  }
+
+  /** Warns when the server's `max_payload` is below `minMaxPayloadBytes`. */
+  private checkMaxPayload(connection: NatsConnection): void {
+    const maxPayload = connection.info?.max_payload;
+    const minimum =
+      this.options.minMaxPayloadBytes ?? DEFAULT_MIN_MAX_PAYLOAD_BYTES;
+    if (maxPayload === undefined || maxPayload >= minimum) return;
+    this.logger.warn(
+      `NATS server ${connection.getServer()} accepts messages of at most ${maxPayload} bytes (max_payload), ` +
+        `less than the ${minimum} bytes this service expects: larger events are refused with EventTooLargeError ` +
+        '(set max_payload: 4MB on the server, as infra/nats/nats.conf does)',
+    );
   }
 
   /** Logs connection state changes until the connection closes. */

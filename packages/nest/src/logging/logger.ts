@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 
 import {
   pino,
@@ -18,7 +19,11 @@ export interface LoggerSettings {
   /** `version` field of every line (`SERVICE_VERSION`). */
   readonly version?: string | undefined;
   readonly level?: LogLevel | undefined;
-  /** Human-readable output through `pino-pretty` (development). */
+  /**
+   * Human-readable output through `pino-pretty` (development), resolved from
+   * the service's dependencies first ({@link resolvePinoPretty}); JSON with a
+   * warning when it is not installed.
+   */
   readonly pretty?: boolean | undefined;
 }
 
@@ -37,15 +42,26 @@ export function loggerSettingsFromConfig(
   };
 }
 
-const require = createRequire(import.meta.url);
-
-/** Absolute path of `pino-pretty` when it is installed (optional peer). */
-function resolvePinoPretty(): string | undefined {
-  try {
-    return require.resolve('pino-pretty');
-  } catch {
-    return undefined;
+/**
+ * Absolute path of `pino-pretty` when it is installed: first as a
+ * dependency of the service (resolved from `<cwd>/package.json`, usually a
+ * devDependency), then from the kit's own location. pino-pretty is only
+ * needed for development logging (`LOG_PRETTY`), so production images
+ * (`pnpm install --prod`) need not contain it.
+ *
+ * @param cwd the service root. Default `process.cwd()`.
+ */
+export function resolvePinoPretty(
+  cwd: string = process.cwd(),
+): string | undefined {
+  for (const base of [join(cwd, 'package.json'), import.meta.url]) {
+    try {
+      return createRequire(base).resolve('pino-pretty');
+    } catch {
+      // Not installed there: try the next location.
+    }
   }
+  return undefined;
 }
 
 /** Adds the active trace id to every line (spec §10). */

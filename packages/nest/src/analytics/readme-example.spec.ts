@@ -104,5 +104,18 @@ describe('README: GeofenceDetector', () => {
     await harness.position({ mmsi: 525005223, lat: 1.2, lon: 104.2 });
     expect(harness.resolutions).toHaveLength(1);
     expect(harness.logs.filter((line) => line.startsWith('error'))).toEqual([]);
+
+    // alert.resolved.v1 goes out once the alert cooldown (10 min) since the
+    // raise is over: a re-entry before then reopens the same alert instead.
+    expect(harness.resolvedEvents).toEqual([]);
+    harness.advance(10 * 60_000);
+    await harness.maintain();
+    expect(harness.resolvedEvents).toEqual([
+      expect.objectContaining({
+        alertId: harness.alerts[0]?.id,
+        dedupKey: `geofence:525005223:${zone.id}`,
+        reason: 'left the zone',
+      }),
+    ]);
   });
 });

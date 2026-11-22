@@ -8,8 +8,13 @@ import {
 import { DiscoveryService, MetadataScanner } from '@nestjs/core';
 
 import { NatsConsumerRuntime } from './consumer-runtime.js';
-import { DurableConsumerRunner } from './durable-consumer-runner.js';
 import {
+  type ConsumerState,
+  DurableConsumerRunner,
+  type DurableConsumerRunnerOptions,
+} from './durable-consumer-runner.js';
+import {
+  type ExclusiveConsumerEvent,
   getEventHandlerMetadata,
   withDurableName,
 } from './event-handler.decorator.js';
@@ -25,11 +30,42 @@ export class DuplicateConsumerHandlerError extends Error {
   override readonly name = 'DuplicateConsumerHandlerError';
 }
 
+type ExclusiveHook = (event: ExclusiveConsumerEvent) => unknown;
+
+/** Awaits what a listener method returned (a value or a promise). */
+async function settle(result: unknown): Promise<void> {
+  await result;
+}
+
+/** The `ExclusiveConsumerListener` methods of a provider, bound to it. */
+function listenerHooks(instance: object): DurableConsumerRunnerOptions {
+  const bind = (name: string): ExclusiveHook | undefined => {
+    const method: unknown = Reflect.get(instance, name);
+    return typeof method === 'function'
+      ? (method.bind(instance) as ExclusiveHook)
+      : undefined;
+  };
+  const activated = bind('onConsumerActivated');
+  const deactivated = bind('onConsumerDeactivated');
+  return {
+    ...(activated === undefined
+      ? {}
+      : { onActivated: (event) => settle(activated(event)) }),
+    ...(deactivated === undefined
+      ? {}
+      : { onDeactivated: (event) => settle(deactivated(event)) }),
+  };
+}
+
 /**
  * Discovers `@EventHandler` / `@OrderedEventHandler` methods of the
  * application's singleton providers when the application bootstraps (after
  * every `onModuleInit`, so migrations are done), starts one runner per
  * handler, and stops them gracefully before the application shuts down.
+ * Providers of exclusive consumers may implement
+ * `ExclusiveConsumerListener` (`onConsumerActivated`,
+ * `onConsumerDeactivated`); {@link state} tells whether this instance is the
+ * active one.
  */
 @Injectable()
 export class EventConsumers
@@ -48,6 +84,26 @@ export class EventConsumers
   /** The consumers started by this application. */
   get running(): readonly RunningConsumer[] {
     return this.runners;
+  }
+
+  /**
+   * Role of a running durable consumer of this application: `active` /
+   * `standby` / `starting` for exclusive consumers, `shared` otherwise;
+   * `undefined` when no durable consumer of that name runs.
+   *
+   * @param durableName the contracts durable name (`NATS_DURABLE_PREFIX` is
+   *   added) or the full durable name.
+   */
+  state(durableName: string): ConsumerState | undefined {
+    const prefixed = `${this.runtime.durablePrefix}${durableName}`;
+    for (const runner of this.runners) {
+      if (
+        runner instanceof DurableConsumerRunner &&
+        (runner.name === prefixed || runner.name === durableName)
+      )
+        return runner.state;
+    }
+    return undefined;
   }
 
   /** Discovers the handlers and starts their consumers. */
@@ -104,6 +160,7 @@ export class EventConsumers
                 ),
                 handler,
                 handlerName,
+                listenerHooks(instance),
               )
             : new OrderedConsumerRunner(
                 this.runtime,

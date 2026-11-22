@@ -6,7 +6,15 @@ import type { GeoJsonGeometry } from '@darmawanweb/ais-its-contracts/domain';
 import { Controller, Get, Injectable, Module } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { eq, sql } from 'drizzle-orm';
-import { doublePrecision, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import {
+  doublePrecision,
+  integer,
+  pgSchema,
+  text,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import type { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -23,7 +31,12 @@ import {
   geographyIntersectsBBox,
   InjectDb,
   InjectPool,
+  isUniqueViolation,
   pointGeography,
+  refreshContinuousAggregate,
+  rowDate,
+  rowDateOrNull,
+  sqlStateOf,
   withinM,
   withTransaction,
 } from '../src/db/index.js';
@@ -47,6 +60,11 @@ const zones = service.table('zones', {
   name: text('name').notNull(),
   geom: geography('geom', { subtype: 'Geometry' }).notNull(),
 });
+const counters = service.table('counters', {
+  id: text('id').primaryKey(),
+  value: integer('value').notNull(),
+});
+const codes = service.table('codes', { code: text('code').notNull() });
 const schema = { ports, zones };
 
 const MIGRATION = `CREATE TABLE ports (
@@ -271,5 +289,137 @@ describe('DatabaseModule', () => {
       { readOnly: true },
     );
     expect(readOnly).toBe('on');
+  });
+
+  it('retries a real deadlock between two drizzle transactions (CORE-2)', async () => {
+    const { pool } = repository;
+    await pool.query(
+      'CREATE TABLE counters (id text PRIMARY KEY, value integer NOT NULL)',
+    );
+    await pool.query("INSERT INTO counters VALUES ('a', 0), ('b', 0)");
+    // Both first attempts take their first row lock, then wait for each other.
+    let arrived = 0;
+    let releaseBarrier = (): void => undefined;
+    const bothLocked = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const attempts = { ab: 0, ba: 0 };
+    const errors: unknown[] = [];
+    const transfer = (key: 'ab' | 'ba', first: string, second: string) =>
+      withTransaction(
+        pool,
+        async (client) => {
+          attempts[key] += 1;
+          const db = drizzle({ client });
+          const bump = (id: string) =>
+            db
+              .update(counters)
+              .set({ value: sql`${counters.value} + 1` })
+              .where(eq(counters.id, id));
+          try {
+            await bump(first);
+            if (attempts[key] === 1) {
+              arrived += 1;
+              if (arrived === 2) releaseBarrier();
+              await bothLocked;
+            }
+            await bump(second);
+          } catch (error) {
+            errors.push(error);
+            throw error;
+          }
+        },
+        { retries: 2, retryDelayMs: 20 },
+      );
+    await Promise.all([transfer('ab', 'a', 'b'), transfer('ba', 'b', 'a')]);
+    // The deadlock victim was a DrizzleQueryError wrapping 40P01, and was re-run.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(DrizzleQueryError);
+    expect(sqlStateOf(errors[0])).toBe('40P01');
+    expect(attempts.ab + attempts.ba).toBe(3);
+    const { rows } = await pool.query<{ id: string; value: number }>(
+      'SELECT id, value FROM counters ORDER BY id',
+    );
+    expect(rows).toEqual([
+      { id: 'a', value: 2 },
+      { id: 'b', value: 2 },
+    ]);
+  });
+
+  it('recognizes unique violations of drizzle inserts by constraint name', async () => {
+    const { pool, db } = repository;
+    await pool.query(
+      'CREATE TABLE codes (code text NOT NULL CONSTRAINT codes_code_key UNIQUE)',
+    );
+    await db.insert(codes).values({ code: 'IDJKT' });
+    const error = await db
+      .insert(codes)
+      .values({ code: 'IDJKT' })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DrizzleQueryError);
+    expect(isUniqueViolation(error)).toBe(true);
+    expect(isUniqueViolation(error, 'codes_code_key')).toBe(true);
+    expect(isUniqueViolation(error, 'other_key')).toBe(false);
+  });
+
+  it('converts the timestamp strings of raw drizzle rows (CORE-17)', async () => {
+    const { db, pool } = repository;
+    const result = await db.execute<{ t: Date | string; none: null }>(
+      sql`SELECT now() AS t, NULL::timestamptz AS none`,
+    );
+    const row = result.rows[0];
+    // drizzle overrides pg's parsers: the "Date" is the text PostgreSQL sent.
+    expect(typeof row?.t).toBe('string');
+    const parsed = rowDate(row?.t ?? '');
+    const viaPg = (
+      await pool.query<{ t: Date }>('SELECT $1::timestamptz AS t', [row?.t])
+    ).rows[0]?.t;
+    expect(parsed).toBeInstanceOf(Date);
+    expect(parsed.getTime()).toBe(viaPg?.getTime());
+    expect(Math.abs(parsed.getTime() - Date.now())).toBeLessThan(60_000);
+    expect(rowDateOrNull(row?.none)).toBeNull();
+  });
+
+  it('retries concurrent continuous aggregate refreshes (CORE-18)', async () => {
+    const { pool } = repository;
+    await pool.query(
+      'CREATE TABLE readings (time timestamptz NOT NULL, value double precision NOT NULL)',
+    );
+    await pool.query(
+      "SELECT create_hypertable('readings', by_range('time', INTERVAL '1 day'))",
+    );
+    await pool.query(
+      "INSERT INTO readings SELECT t, random() FROM generate_series(now() - interval '20 days', now(), interval '10 seconds') AS t",
+    );
+    await pool.query(
+      "CREATE MATERIALIZED VIEW readings_hourly WITH (timescaledb.continuous) AS SELECT time_bucket('1 hour', time) AS bucket, avg(value) AS value FROM readings GROUP BY bucket WITH NO DATA",
+    );
+    const from = new Date(Date.now() - 21 * 86_400_000);
+    const to = new Date();
+    const retries: number[] = [];
+    const results = await Promise.all(
+      [1, 2, 3].map(() =>
+        refreshContinuousAggregate(pool, 'readings_hourly', from, to, {
+          onRetry: (error, retry) => {
+            expect(sqlStateOf(error)).toBe('55P03');
+            retries.push(retry);
+          },
+        }),
+      ),
+    );
+    expect(results.every((result) => result.attempts >= 1)).toBe(true);
+    // TimescaleDB rejects overlapping refreshes at once: some were retried.
+    expect(retries.length).toBeGreaterThan(0);
+    const { rows } = await pool.query<{ buckets: string }>(
+      'SELECT count(*) AS buckets FROM readings_hourly',
+    );
+    expect(Number(rows[0]?.buckets)).toBeGreaterThan(400);
+
+    await expect(
+      refreshContinuousAggregate(pool, 'no_such_aggregate', from, to),
+    ).rejects.toMatchObject({ code: '42P01' });
+    await expect(
+      refreshContinuousAggregate(pool, 'readings', from, to),
+    ).rejects.toSatisfy((error: unknown) => sqlStateOf(error) !== '55P03');
   });
 });

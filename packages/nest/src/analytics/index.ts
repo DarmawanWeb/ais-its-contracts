@@ -10,14 +10,21 @@
 export {
   AlertEmitter,
   type AlertEmitterOptions,
+  type AlertForgetOptions,
   type AlertOutcome,
   type AlertPersistence,
+  type AlertPublicationResult,
   type AlertPublisher,
+  type AlertReplaceOptions,
+  type AlertReplaceResult,
   type AlertResolution,
+  type AlertResolutionPublisher,
   type AlertResolveOptions,
   type AlertSignal,
   AlertSignalError,
   type AlertUpdate,
+  DEFAULT_ALERT_COOLDOWN_MS,
+  DEFAULT_ALERT_REPEATED_INTERVAL_MS,
   type OpenAlert,
 } from './alert-emitter.js';
 export {
@@ -43,8 +50,13 @@ export {
   parseDetectorConfig,
   parseDetectorList,
 } from './detector-config.js';
-export { DetectorEngine } from './detector-engine.js';
 export {
+  type DetectorActivation,
+  type DetectorActivationOptions,
+  DetectorEngine,
+} from './detector-engine.js';
+export {
+  type ActivationOutcome,
   type DetectorHook,
   DetectorMetrics,
   type PositionOutcome,

@@ -73,7 +73,11 @@ export const HeadingSchema = z
   .union([z.number().min(0).lt(360), z.literal(HEADING_NOT_AVAILABLE)])
   .describe('True heading in degrees 0..359 (511 = not available)');
 
-/** AIS navigational status codes (ITU-R M.1371, message types 1-3). */
+/**
+ * AIS navigational status codes (ITU-R M.1371, message types 1-3).
+ *
+ * @method navstatus.ais_codes
+ */
 export const NAV_STATUS = {
   UNDER_WAY_USING_ENGINE: 0,
   AT_ANCHOR: 1,

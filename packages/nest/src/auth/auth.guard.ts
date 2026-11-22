@@ -25,6 +25,7 @@ import {
   API_KEY_SCOPES_KEY,
   IS_INTERNAL_KEY,
   IS_PUBLIC_KEY,
+  PLATFORM_ADMIN_KEY,
   REQUIRED_PERMISSIONS_KEY,
 } from './decorators.js';
 import { internalTokenMatches } from './internal-token.js';
@@ -44,6 +45,8 @@ interface RouteRequirements {
   readonly permissions: readonly Permission[];
   /** API-key scopes, when the route accepts API keys. */
   readonly scopes: readonly ApiKeyScope[] | undefined;
+  /** `@RequirePlatformAdmin()` on the handler or its controller. */
+  readonly platformAdmin: boolean;
 }
 
 /**
@@ -54,11 +57,16 @@ interface RouteRequirements {
  * 3. Otherwise a principal is required: `Authorization: Bearer <jwt>`, or
  *    `X-API-Key` on `@AllowApiKey(...)` routes. Missing/invalid credentials
  *    → `401` (with `WWW-Authenticate`).
- * 4. Users need every `@RequirePermissions(...)` permission, API keys every
+ * 4. `@RequirePlatformAdmin()` routes need a user with `super_admin`
+ *    (`isPlatformAdmin`); other users and API keys → `403
+ *    PLATFORM_ADMIN_REQUIRED`.
+ * 5. Users need every `@RequirePermissions(...)` permission, API keys every
  *    `@AllowApiKey(...)` scope → `403 FORBIDDEN` / `403 INSUFFICIENT_SCOPE`.
  *
- * Precedence: a handler's own `@RequirePermissions` / `@AllowApiKey`
- * protect it even under a controller-level `@Public()`, and a
+ * Precedence: a handler's own `@RequirePermissions` / `@AllowApiKey` /
+ * `@RequirePlatformAdmin` protect it even under a controller-level
+ * `@Public()`, a handler-level `@Public()` opens it under a controller-level
+ * `@RequirePlatformAdmin()`, and a
  * controller-level `@AllowApiKey` does not extend to handlers that declare
  * their own `@RequirePermissions` (add `@AllowApiKey` to such a handler to
  * accept keys there).
@@ -109,6 +117,7 @@ export class AuthGuard implements CanActivate {
     if (route.public) return true;
 
     const principal = await this.authenticate(request, route.scopes);
+    if (route.platformAdmin) this.requirePlatformAdmin(principal);
     this.authorize(principal, route.permissions, route.scopes ?? []);
     setRequestPrincipal(request, principal);
     this.assignLogPrincipal(principal);
@@ -129,8 +138,13 @@ export class AuthGuard implements CanActivate {
       readonly ApiKeyScope[] | undefined,
       string
     >(API_KEY_SCOPES_KEY, handler);
+    const ownPlatformAdmin =
+      this.reflector.get<boolean | undefined, string>(
+        PLATFORM_ADMIN_KEY,
+        handler,
+      ) === true;
     const ownRequirements =
-      ownPermissions.length > 0 || ownScopes !== undefined;
+      ownPermissions.length > 0 || ownScopes !== undefined || ownPlatformAdmin;
     const publicHandler =
       this.reflector.get<boolean | undefined, string>(
         IS_PUBLIC_KEY,
@@ -152,6 +166,11 @@ export class AuthGuard implements CanActivate {
         REQUIRED_PERMISSIONS_KEY,
         targets,
       ),
+      platformAdmin:
+        this.reflector.getAllAndOverride<boolean | undefined, string>(
+          PLATFORM_ADMIN_KEY,
+          targets,
+        ) === true,
       scopes:
         ownScopes ??
         (ownPermissions.length > 0
@@ -206,6 +225,17 @@ export class AuthGuard implements CanActivate {
     throw new UnauthorizedError('Authentication required', {
       challenge: scopes === undefined ? 'Bearer' : 'Bearer, ApiKey',
     });
+  }
+
+  /** `403 PLATFORM_ADMIN_REQUIRED` unless a platform administrator (never an API key). */
+  private requirePlatformAdmin(principal: Principal): void {
+    if (principal.kind === 'user' && principal.isPlatformAdmin) return;
+    throw new ForbiddenError(
+      principal.kind === 'api_key'
+        ? 'API keys cannot use platform administration routes'
+        : 'This operation requires a platform administrator',
+      { code: 'PLATFORM_ADMIN_REQUIRED' },
+    );
   }
 
   private authorize(

@@ -5,18 +5,27 @@ import { join } from 'node:path';
 import type { Pool } from 'pg';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 
+import { Module } from '@nestjs/common';
+
+import { baseConfigSchema } from '../src/config/index.js';
 import {
   createDatabasePool,
+  DatabaseModule,
   MigrationChecksumMismatchError,
   MigrationFailedError,
   MigrationFileError,
   MigrationOrderError,
   MigrationSchemaMissingError,
+  MigrationsDirectoryNotFoundError,
   migrationChecksum,
   runMigrations,
   runMigrationsCli,
 } from '../src/db/index.js';
-import { provisionServiceSchema } from '../src/testing/index.js';
+import {
+  buildTestApp,
+  createTestConfig,
+  provisionServiceSchema,
+} from '../src/testing/index.js';
 import { testInfra, uniqueName } from './support/infra.js';
 
 interface Fixture {
@@ -319,6 +328,50 @@ describe('runMigrationsCli', () => {
       ).toEqual([{ count: 2 }]);
     } finally {
       process.env = saved;
+    }
+  });
+});
+
+describe('migrations directory (CORE-19)', () => {
+  it('boots from another working directory only with migrationsDir', async () => {
+    const { schema, url, dir, pool } = await fixture({ '0001_init.sql': INIT });
+    const elsewhere = await mkdtemp(join(tmpdir(), 'kit-elsewhere-'));
+    const previous = process.cwd();
+    const boot = async (migrationsDir?: string) => {
+      @Module({
+        imports: [
+          DatabaseModule.forRoot(
+            migrationsDir === undefined ? {} : { migrationsDir },
+          ),
+        ],
+      })
+      class AppModule {}
+      return buildTestApp(AppModule, {
+        config: createTestConfig(baseConfigSchema, {
+          DATABASE_URL: url,
+          DATABASE_SCHEMA: schema,
+          DB_MIGRATE_ON_BOOT: 'true',
+        }),
+      });
+    };
+    process.chdir(elsewhere);
+    try {
+      const error = await boot().catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(MigrationsDirectoryNotFoundError);
+      expect(error).toMatchObject({
+        directory: join(elsewhere, 'migrations'),
+        cwd: elsewhere,
+      });
+      expect((error as Error).message).toMatch(/migrationsDir/);
+
+      const app = await boot(dir);
+      await app.close();
+      expect(
+        (await pool.query('SELECT count(*)::int AS count FROM things')).rows,
+      ).toEqual([{ count: 2 }]);
+    } finally {
+      process.chdir(previous);
+      await rm(elsewhere, { recursive: true, force: true });
     }
   });
 });

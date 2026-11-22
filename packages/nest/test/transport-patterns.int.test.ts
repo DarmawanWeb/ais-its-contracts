@@ -10,6 +10,8 @@ import {
 import { Injectable, Module } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { Pool } from 'pg';
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { makeTestZone } from '../src/analytics/index.js';
@@ -258,7 +260,7 @@ describe('transport patterns: inbox, outbox and core subscriptions', () => {
       ]);
     });
 
-    it('lets one relay at a time publish (advisory lock), keeping the order', async () => {
+    it('yields to a kit 0.2 serial relay holding the advisory lock (rolling upgrade)', async () => {
       const relay = app.get(OutboxRelay);
       await enqueueEvent(
         pool,
@@ -271,9 +273,11 @@ describe('transport patterns: inbox, outbox and core subscriptions', () => {
         await holder.query(
           `SELECT pg_advisory_xact_lock(('x' || substr(encode(sha256('aisits:outbox:outbox'::bytea), 'hex'), 1, 16))::bit(64)::bigint)`,
         );
+        // Per-key relays share the lock among themselves only.
         expect(await relay.relayOnce()).toMatchObject({
           skipped: true,
           published: 0,
+          mode: 'per-key',
         });
         await holder.query('ROLLBACK');
       } finally {
@@ -311,5 +315,124 @@ describe('transport patterns: inbox, outbox and core subscriptions', () => {
         /aisits_core_messages_total\{subscription="telemetry-mqtt",outcome="failed"\} 1/,
       );
     });
+  });
+});
+
+/** A valid `RealtimeAlertFanout` (contracts `./realtime`). */
+const alertPush = {
+  event: 'alert:updated',
+  rooms: ['authority'],
+  alert: {
+    id: '01a1f8c2-54d8-71c4-95cf-ab5eb8908e01',
+    type: 'ews',
+    domain: 'safety',
+    severity: 'critical',
+    status: 'open',
+    mmsi: 525_005_223,
+    relatedMmsi: null,
+    title: 'At anchor within 500 m of the pipeline',
+    message: 'KM Sinar Batam is predicted at anchor 312 m from the pipeline.',
+    lat: -6.8629,
+    lon: 112.7166,
+    zoneId: null,
+    methodId: 'ews.status',
+    occurredAt: '2026-11-20T08:31:00.000Z',
+    lastOccurredAt: '2026-11-20T08:41:00.000Z',
+    occurrences: 3,
+    data: { ewsStatus: 0 },
+  },
+};
+
+/** One notification replica: realtime pushes (fan-out) and device messages (queue). */
+@Injectable()
+class NotificationReplica {
+  readonly pushes: unknown[] = [];
+  readonly devices: string[] = [];
+
+  @CoreSubscriptionHandler({ subscription: 'notification-realtime-fanout' })
+  onPush(_message: Msg, payload?: unknown): void {
+    this.pushes.push(payload);
+  }
+
+  @CoreSubscriptionHandler({ subscription: 'telemetry-mqtt' })
+  onDevice(message: Msg): void {
+    this.devices.push(message.subject);
+  }
+}
+
+describe('core subscription delivery modes (fan-out and queue)', () => {
+  const replicas: NestFastifyApplication[] = [];
+
+  beforeAll(async () => {
+    for (let index = 0; index < 2; index += 1) {
+      @Module({
+        imports: [NatsModule.forRoot({})],
+        providers: [NotificationReplica],
+      })
+      class ReplicaModule {}
+      replicas.push(
+        await buildTestApp(ReplicaModule, {
+          config: createTestConfig(baseConfigSchema, {
+            SERVICE_NAME: 'notification',
+            NATS_URL: testInfra().natsUrl,
+          }),
+        }),
+      );
+    }
+  });
+
+  afterAll(async () => {
+    await Promise.all(replicas.map((replica) => replica.close()));
+  });
+
+  it('delivers every message of a fan-out subscription to every instance and validates it', async () => {
+    const [first] = replicas;
+    if (first === undefined) throw new Error('no replica');
+    const { connection } = await first.get(NatsClient).ready();
+    const subject = 'aisits.notification.realtime.v1';
+    const raised = { ...alertPush, event: 'alert:raised' };
+    connection.publish(subject, JSON.stringify(alertPush));
+    connection.publish(subject, 'not json');
+    connection.publish(subject, JSON.stringify({ ...alertPush, rooms: [] }));
+    connection.publish(subject, JSON.stringify(raised));
+    await connection.flush();
+    await waitFor(
+      () =>
+        replicas.every(
+          (replica) => replica.get(NotificationReplica).pushes.length === 2,
+        ),
+      { timeoutMs: 5_000 },
+    );
+    for (const replica of replicas) {
+      expect(replica.get(NotificationReplica).pushes).toEqual([
+        alertPush,
+        raised,
+      ]);
+      const metrics = await replica.get(MetricsService).render();
+      expect(metrics).toMatch(
+        /aisits_core_messages_total\{subscription="notification-realtime-fanout",outcome="invalid"\} 2/,
+      );
+      expect(metrics).toMatch(
+        /aisits_core_messages_total\{subscription="notification-realtime-fanout",outcome="handled"\} 2/,
+      );
+    }
+  });
+
+  it('still delivers each message of a queue subscription to one instance', async () => {
+    const [first] = replicas;
+    if (first === undefined) throw new Error('no replica');
+    const { connection } = await first.get(NatsClient).ready();
+    const subject = `${DEVICE_SUBJECT_PREFIX}${uniqueName('queued')}`;
+    for (let index = 0; index < 6; index += 1)
+      connection.publish(subject, JSON.stringify({ index }));
+    await connection.flush();
+    const total = (): number =>
+      replicas.reduce(
+        (sum, replica) => sum + replica.get(NotificationReplica).devices.length,
+        0,
+      );
+    await waitFor(() => total() === 6, { timeoutMs: 5_000 });
+    await sleep(300); // a second copy would show up here
+    expect(total()).toBe(6);
   });
 });

@@ -41,11 +41,23 @@ export type DetectorAlertSignal = Omit<AlertSignal, 'methodId'> & {
 export interface DetectorAlerts {
   /** Reports a condition; see `AlertEmitter.raise` for the outcomes. */
   raise(signal: DetectorAlertSignal): Promise<AlertOutcome>;
-  /** Ends the open occurrence of `dedupKey`; `false` when none was open. */
+  /**
+   * Ends the open occurrence of `dedupKey` and announces it with
+   * `alert.resolved.v1` (unless `publish: false` or the runner's
+   * `publishResolutions: false`; see `AlertEmitter.resolve` for the
+   * cooldown timing); `false` when none was open.
+   */
   resolve(
     dedupKey: string,
-    options?: Omit<AlertResolveOptions, 'accept'>,
+    options?: Omit<AlertResolveOptions, 'accept' | 'domain' | 'methodId'>,
   ): Promise<boolean>;
+  /**
+   * Drops this detector's state of `dedupKey` (open occurrence and cooldown
+   * entry) without persisting or publishing anything, e.g. when the
+   * occurrence ended elsewhere: the next signal raises a new occurrence.
+   * `false` when the key had no state of this detector.
+   */
+  forget(dedupKey: string): Promise<boolean>;
   /** The open occurrence of a key. */
   get(dedupKey: string): OpenAlert | undefined;
   /** `true` when the key is open. */
@@ -105,6 +117,16 @@ export interface DetectorContext<Config = unknown> {
   readonly logger: DetectorLogger;
   /** The SDK clock (fixed in tests). */
   now(): Date;
+  /**
+   * `true` while this instance is the active detector instance: always
+   * with a shared position consumer (`exclusive: false`); with the default
+   * exclusive consumer, from the end of its activation (the first position
+   * after it was pinned, see {@link Detector.onActivated}) until another
+   * instance takes over or it stops. Ticks run only while it is `true`;
+   * check it before raising or resolving from `onZoneChanged` /
+   * `onVesselChanged`, which run on every instance.
+   */
+  isActive(): boolean;
 }
 
 /**
@@ -153,7 +175,8 @@ export interface Detector<Config = Record<string, never>> {
     call: DetectorCall,
   ): void | Promise<void>;
   /**
-   * Periodic evaluation (e.g. AIS gaps), every `tickIntervalMs`; ticks never
+   * Periodic evaluation (e.g. AIS gaps), every `tickIntervalMs`, only while
+   * this instance is active ({@link DetectorContext.isActive}); ticks never
    * overlap each other but run alongside position calls (alert operations
    * on one `dedupKey` are serialized by the emitter).
    */
@@ -162,13 +185,42 @@ export interface Detector<Config = Record<string, never>> {
     now: Date,
     call: DetectorCall,
   ): void | Promise<void>;
-  /** A zone was created, changed or deleted (after the index was updated). */
+  /**
+   * This instance became the active one (its exclusive position consumer
+   * was pinned, e.g. after a failover): runs before the first position of
+   * the active period, after running calls settled, pending resolutions
+   * were published and the open alerts were reloaded from
+   * `AlertPersistence.loadOpen` (replace semantics). Drop local state built
+   * while another instance was active (pair trackers, streaks) and rebuild
+   * it from the positions to come. Isolated and bounded by `callTimeoutMs`
+   * like every call; `isActive()` turns `true` once it settled.
+   */
+  onActivated?(
+    context: DetectorContext<Config>,
+    call: DetectorCall,
+  ): void | Promise<void>;
+  /**
+   * This instance stopped being the active one: another instance took
+   * over, or the application stops. Positions stop arriving and ticks
+   * pause until the next {@link onActivated}.
+   */
+  onDeactivated?(
+    context: DetectorContext<Config>,
+    call: DetectorCall,
+  ): void | Promise<void>;
+  /**
+   * A zone was created, changed or deleted (after the index was updated).
+   * Runs on every instance, active or standby.
+   */
   onZoneChanged?(
     context: DetectorContext<Config>,
     change: DetectorZoneChange,
     call: DetectorCall,
   ): void | Promise<void>;
-  /** A vessel snapshot was created, changed or deleted (after the directory was updated). */
+  /**
+   * A vessel snapshot was created, changed or deleted (after the directory
+   * was updated). Runs on every instance, active or standby.
+   */
   onVesselChanged?(
     context: DetectorContext<Config>,
     change: DetectorVesselChange,

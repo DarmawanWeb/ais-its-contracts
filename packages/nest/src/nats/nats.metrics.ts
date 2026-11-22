@@ -27,7 +27,8 @@ export type ConsumeOutcome =
  * `aisits_events_consumed_total{stream,consumer,outcome}`,
  * `aisits_events_invalid_total{stream,consumer,reason}` and
  * `aisits_event_handler_duration_seconds{stream,consumer,outcome}`, plus
- * `aisits_events_consumer_recoveries_total{stream,consumer,outcome}`.
+ * `aisits_events_consumer_recoveries_total{stream,consumer,outcome}` and
+ * `aisits_events_consumer_activations_total{consumer}`.
  */
 @Injectable()
 export class NatsMetrics {
@@ -37,6 +38,8 @@ export class NatsMetrics {
   readonly handlerDuration: Histogram<'stream' | 'consumer' | 'outcome'>;
   /** Recoveries of missing streams/consumers by outcome (`recreated`, `checked`, `failed`). */
   readonly consumerRecoveries: Counter<'stream' | 'consumer' | 'outcome'>;
+  /** Times this instance became the active one of an exclusive consumer. */
+  readonly consumerActivations: Counter<'consumer'>;
 
   constructor(
     @Optional() @Inject(MetricsService) metrics: MetricsService | null = null,
@@ -44,7 +47,7 @@ export class NatsMetrics {
     const registry = metrics ?? new MetricsService();
     this.published = registry.counter({
       name: 'events_published_total',
-      help: 'Events published to JetStream by type and outcome (stored, duplicate, failed).',
+      help: 'Events published to JetStream by type and outcome (stored, duplicate, failed, rejected = larger than max_payload).',
       labelNames: ['type', 'outcome'],
     });
     this.consumed = registry.counter({
@@ -66,6 +69,11 @@ export class NatsMetrics {
       name: 'events_consumer_recoveries_total',
       help: 'Recoveries of durable consumers whose consumer or stream went missing, by outcome (recreated, checked, failed).',
       labelNames: ['stream', 'consumer', 'outcome'],
+    });
+    this.consumerActivations = registry.counter({
+      name: 'events_consumer_activations_total',
+      help: 'Times this instance became the active (pinned) instance of an exclusive durable consumer.',
+      labelNames: ['consumer'],
     });
   }
 }

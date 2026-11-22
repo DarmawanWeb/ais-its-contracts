@@ -101,6 +101,7 @@ export async function buildTestApp(
       openapi: options.openapi ?? { title: 'Test', version: '0.0.0' },
       cookies: options.cookies,
       multipart: options.multipart,
+      cors: options.cors,
     });
     await options.configure?.(app);
     await app.init();

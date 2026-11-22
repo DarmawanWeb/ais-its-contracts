@@ -7,6 +7,7 @@ import {
   AisPositionRecordedV1Schema,
   AisRawReceivedV1Schema,
   AlertRaisedV1Schema,
+  AlertResolvedV1Schema,
   AuditRecordedV1Schema,
   CiiUpdatedV1Schema,
   EmailRequestedV1Schema,
@@ -31,6 +32,7 @@ export const EVENT_SCHEMAS = {
   [EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED]: SafetyVesselStateV1Schema,
   [EVENT_TYPES.EMISSION_CII_UPDATED]: CiiUpdatedV1Schema,
   [EVENT_TYPES.ALERT_RAISED]: AlertRaisedV1Schema,
+  [EVENT_TYPES.ALERT_RESOLVED]: AlertResolvedV1Schema,
   [EVENT_TYPES.NOTIFY_EMAIL_REQUESTED]: EmailRequestedV1Schema,
   [EVENT_TYPES.AUDIT_RECORDED]: AuditRecordedV1Schema,
 } as const satisfies Readonly<Record<EventType, z.ZodType>>;

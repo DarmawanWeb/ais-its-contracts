@@ -14,6 +14,7 @@ import { METHODS, REFERENCES } from '../../src/references/lookup.js';
 import {
   CATALOG_FILES,
   DATA_MODULE_DIR,
+  readCatalog,
   renderDataModules,
   syncReferences,
 } from './references-sync.js';
@@ -160,6 +161,25 @@ describe('syncReferences', () => {
       kind: 'invalid',
       issues: [{ field: 'methods.json' }],
     });
+  });
+
+  it('reads and validates the catalog for other tools (references:verify)', async () => {
+    expect((await readCatalog(sourceDir)).kind).toBe('missing');
+    await writeCatalog(CATALOG_REFERENCES, CATALOG_METHODS);
+    const read = await readCatalog(sourceDir);
+    const expected = validateCatalog({
+      references: CATALOG_REFERENCES,
+      methods: CATALOG_METHODS,
+    });
+    expect(expected.success).toBe(true);
+    expect(read).toEqual({
+      kind: 'valid',
+      catalog: expected.success ? expected.catalog : null,
+    });
+    await writeCatalog(CATALOG_REFERENCES, [
+      { ...CATALOG_METHODS[0], referenceIds: ['no-such-reference'] },
+    ]);
+    expect((await readCatalog(sourceDir)).kind).toBe('invalid');
   });
 
   it('detects outdated data modules in check mode without writing', async () => {

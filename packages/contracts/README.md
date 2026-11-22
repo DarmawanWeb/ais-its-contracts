@@ -100,6 +100,44 @@ if (!result.success) {
 }
 ```
 
+`CONSUMERS` entries keep their literal types (since 0.4.0): `eventTypes` is a tuple of event type
+literals, so the kit's `ConsumerEnvelope<'notification-fleet'>` is exactly
+`fleet.vessel.upserted.v1 | fleet.vessel.deleted.v1` and a `switch (event.type)` over it is
+exhaustive. Declare a consumer that `CONSUMERS` does not list yet with the builders, never with a
+`: DurableConsumerDefinition` annotation (that widens `eventTypes` to every event type):
+
+```ts
+import {
+  defineDurableConsumer,
+  DEFAULT_MAX_DELIVER,
+  EVENT_TYPES,
+  fleetProjectionConsumer,
+  positionFeedConsumer,
+  SUBJECT_FILTERS,
+  zoneProjectionConsumer,
+} from '@darmawanweb/ais-its-contracts/events';
+
+export const POSITIONS = positionFeedConsumer(
+  'speed-limit-positions',
+  'speed-limit',
+  'Feeds the speed limit detector.',
+); // stream AIS_POSITION, eventTypes ['ais.position.recorded.v1']
+export const FLEET = fleetProjectionConsumer(
+  'speed-limit-fleet',
+  'speed-limit',
+);
+export const ZONES = zoneProjectionConsumer('speed-limit-zones', 'speed-limit');
+export const ALERTS = defineDurableConsumer({
+  durableName: 'speed-limit-alerts',
+  stream: 'ALERTS',
+  filterSubjects: [SUBJECT_FILTERS.ALERT],
+  service: 'speed-limit',
+  eventTypes: [EVENT_TYPES.ALERT_RAISED, EVENT_TYPES.ALERT_RESOLVED],
+  maxDeliver: DEFAULT_MAX_DELIVER,
+  description: 'Keeps the speed limit dashboard in sync with the alerts.',
+});
+```
+
 ### Alerts: the alert type registry
 
 Every `alert.raised.v1` carries its `domain` (`safety` | `surveillance`) and the `methodId` of the
@@ -124,6 +162,24 @@ collisionRiskAlertSeverity('medium'); // "warning"
 alertTypeLabel(alert.type, 'id'); // "Risiko tubrukan"; unknown types are shown by their id
 if (!isKnownAlertType(alert.type)) renderGeneric(alert); // a type from a newer detector
 ```
+
+**Resolutions (`alert.resolved.v1`, since 0.4.0).** When a detector ends an occurrence, safety and
+surveillance publish `AlertResolvedV1` on the **raise's subject** `alert.v1.<alertType>.<mmsi>`
+(stream `ALERTS`, so a durable consumer receives the raise before its resolution), with the
+envelope id as `Nats-Msg-Id`. The payload repeats the occurrence's identity (`alertId` of the last
+published raise, `type`, `domain`, `severity` = the highest published, `mmsi`, `relatedMmsi`,
+`zoneId`, `dedupKey`, `methodId`) and adds `openedAt`, `resolvedAt`, `reason` (at most
+`ALERT_RESOLUTION_REASON_MAX_LENGTH` = 500 characters) and `data`. Producers publish it only once
+the alert cooldown since the last raise has passed (a re-raise within it cancels the resolution),
+so it never contradicts an alert the detector still holds open. The consumer contract:
+
+- resolve the **unresolved** (open or acknowledged) inbox alert with that `dedupKey`, setting
+  `resolvedAt`, a system resolver and the `reason`;
+- do nothing when the alert merged an occurrence **later** than `resolvedAt` (a newer raise won),
+  or when there is no unresolved alert with that key;
+- be idempotent by event id and run no alert-rule deliveries for it.
+
+`CONSUMERS['notification-alerts']` delivers both `alert.raised.v1` and `alert.resolved.v1`.
 
 ### Zones and safety states
 
@@ -159,6 +215,7 @@ batches.add(tileRoomForPosition(item.lon, item.lat), item); // 'safety:states' e
 import {
   AccessTokenClaimsSchema,
   canAccessOrg,
+  hashApiKey,
   parseApiKey,
   permissionsForRoles,
   userPrincipalFromClaims,
@@ -170,7 +227,12 @@ permissionsForRoles(principal.roles).has('surveillance:review');
 canAccessOrg(principal, vessel.orgId); // tenant-private rule of spec 8.5
 
 parseApiKey(apiKeyHeader); // { id, secret, prefix: 'sk_<id>' } | null
+await hashApiKey(apiKeyHeader); // api_keys.key_hash: SHA-256 hex (WebCrypto, async); TypeError for a non-key
 ```
+
+`hashApiKey` (with `API_KEY_HASH_ALGORITHM` = `'SHA-256'`) is the single definition of the stored
+key hash, for the auth service and every client that looks keys up; it works in Node.js and
+browsers and never puts the key into an error message.
 
 ### Domain helpers with legacy parity
 
@@ -192,6 +254,26 @@ classifyEwsStatus(distanceM, predictedNavstatus); // 0 | 1 | 3 (legacy checkShip
 knotsToMs(12); // legacy factor 0.5144
 navStatusLabel(1, 'id'); // "Berlabuh jangkar"
 newId(); // UUID v7
+```
+
+**Fuel formulas** (vessel fuel curves of fleet, evaluated by emission; method
+`fuel.first_formula`): one grammar for both services — numbers, `speedKnot`, `+ - * / ^`
+(right-associative, binding tighter than unary minus: `-2 ^ 2` is `-4`), parentheses and `exp`, `log`/`ln`, `sqrt`, `abs` (one argument),
+`pow` (two) and the variadic `min`/`max`, within `FUEL_FORMULA_LIMITS` (500 characters, depth 32,
+500 tokens; literals must be finite).
+
+```ts
+import {
+  evaluateFuelFormula,
+  FuelFormulaSyntaxError,
+  parseFuelFormula,
+  validateFuelFormula,
+} from '@darmawanweb/ais-its-contracts/domain';
+
+validateFuelFormula('0.02 * speedKnot ^ 3 + 1.5'); // { valid: true, errors: [] }
+validateFuelFormula('pow(speedKnot)'); // { valid: false, errors: [{ message: 'pow() takes 2 arguments, got 1 at position 0', position: 0 }] }
+const formula = parseFuelFormula(vessel.fuelFormula); // parse once (throws FuelFormulaSyntaxError { reason, position })
+evaluateFuelFormula(formula, { speedKnot: 11.5 }); // raw IEEE result (t/day); check Number.isFinite
 ```
 
 ### Realtime (socket.io)
@@ -226,6 +308,34 @@ socket.on('safety:states', ({ items }) => colourBySafety(items)); // RealtimeSaf
 roomsForViewport([94.5, -11.5, 141.5, 6.5]); // { mode: 'tiles', rooms: ['tile:6:48:30', …] }
 ```
 
+**Fan-out between notification instances (since 0.4.0).** socket.io clients are connected to
+different notification replicas, so an `alert:raised` / `alert:updated` push is first published
+on the core NATS subject `aisits.notification.realtime.v1` (`subjects.notificationRealtime()`,
+core subscription `notification-realtime-fanout` with `delivery: 'fanout'`: every instance
+receives every message, no queue group) and each instance emits it to its own sockets. The payload
+is `RealtimeAlertFanoutSchema`: `event` (`'alert:raised'` or `'alert:updated'`), `rooms` (1 to 16 room names) and `alert` (a `RealtimeAlert`); `CORE_SUBSCRIPTION_PAYLOADS[name]` maps every core subscription to its
+payload schema, which the kit validates before calling the handler.
+
+```ts
+import {
+  CORE_SUBSCRIPTIONS,
+  coreSubscriptionDelivery,
+  subjects,
+} from '@darmawanweb/ais-its-contracts/events';
+import { RealtimeAlertFanoutSchema } from '@darmawanweb/ais-its-contracts/realtime';
+
+const fanout = CORE_SUBSCRIPTIONS.find(
+  ({ name }) => name === 'notification-realtime-fanout',
+);
+coreSubscriptionDelivery(fanout!); // 'fanout' (a definition without delivery: 'queue')
+nc.publish(
+  subjects.notificationRealtime(),
+  JSON.stringify(
+    RealtimeAlertFanoutSchema.parse({ event: 'alert:updated', rooms, alert }),
+  ),
+);
+```
+
 ### HTTP conventions
 
 ```ts
@@ -249,6 +359,10 @@ reply
 const query = PageQuerySchema.parse(request.query); // { page: 1, pageSize: 20 } by default
 toPaginated(rows, query, total); // { data, meta: { page, pageSize, total } }
 ```
+
+Platform-wide operations (e.g. republishing every vessel or zone) answer
+`403 PLATFORM_ADMIN_REQUIRED` ("Platform administrator required", since 0.4.0) to anyone but a
+platform administrator; the kit's `@RequirePlatformAdmin()` produces it.
 
 ### Methodology catalog
 
@@ -289,6 +403,19 @@ reference `type` and `verification` are open vocabularies (known values have lab
 are accepted). Editors can validate the catalog files with the generated JSON Schemas
 `schemas/methodology.references.json` and `schemas/methodology.methods.json`.
 
+**Statuses** (`METHOD_STATUSES`): `implemented` — the rule runs in a service (or in this package);
+`implementedBy` names its owner and the module, as `<path>[#<symbol>][ (<remark>)]` relative to the
+owner's root (`services/<owner>/`, or this package for owner `contracts`); `not_implemented` — a
+documented method no service runs (yet); `planned` — kept for compatibility, no catalogued method
+uses it since 0.4.0. Domains (`METHOD_DOMAINS`) include `notification` and `security` since 0.4.0.
+
+`pnpm run references:verify [--services <dir>] [--from <dir>]` checks the catalog against the code
+of the central repository (default `../../../../services`): every `implemented` method's module and
+symbol exist and carry its `@method <id>` TSDoc tag, every tag names a catalogued method, a tagged
+method is not left `planned` / `not_implemented`, and every implemented method has an owner. It
+exits 1 and lists each problem (CI of the central repository runs it after the services carry
+their tags).
+
 ## Event catalog
 
 Generated from `EVENT_CATALOG`, `CONSUMERS` and `ORDERED_CONSUMERS`.
@@ -307,6 +434,7 @@ Generated from `EVENT_CATALOG`, `CONSUMERS` and `ORDERED_CONSUMERS`.
 | `safety.vessel_state.updated.v1` | `SafetyVesselStateV1`   | `safety.state.v1.{mmsi}`             | `SAFETY`       | safety               | `notification-safety` (ordered)                                                                                        |
 | `emission.cii.updated.v1`        | `CiiUpdatedV1`          | `emission.cii.v1.{mmsi}`             | `EMISSION`     | emission             | `notification-cii` (ordered)                                                                                           |
 | `alert.raised.v1`                | `AlertRaisedV1`         | `alert.v1.{alertType}.{mmsi}`        | `ALERTS`       | safety, surveillance | `notification-alerts`                                                                                                  |
+| `alert.resolved.v1`              | `AlertResolvedV1`       | `alert.v1.{alertType}.{mmsi}`        | `ALERTS`       | safety, surveillance | `notification-alerts`                                                                                                  |
 | `notify.email.requested.v1`      | `EmailRequestedV1`      | `notify.email.v1`                    | `NOTIFY`       | auth, notification   | `notification-email`                                                                                                   |
 | `audit.recorded.v1`              | `AuditRecordedV1`       | `audit.v1.{service}`                 | `AUDIT`        | every service        | `auth-audit`                                                                                                           |
 
@@ -341,28 +469,29 @@ retried with exponential backoff and copied to `dlq.<stream>.<consumer>` after `
 
 <!-- generated:consumers:start -->
 
-| Consumer                 | Kind                     | Stream / subject | Filter               | Service       | Purpose                                                                            |
-| ------------------------ | ------------------------ | ---------------- | -------------------- | ------------- | ---------------------------------------------------------------------------------- |
-| `ais-processor`          | durable (max deliver 10) | `AIS_RAW`        | `ais.raw.v1.>`       | ais-processor | Enriches and records raw AIS reports.                                              |
-| `emission-positions`     | durable (max deliver 10) | `AIS_POSITION`   | `ais.position.v1.>`  | emission      | Builds voyage segments (fuel, CO2, CII) from positions.                            |
-| `safety-positions`       | durable (max deliver 10) | `AIS_POSITION`   | `ais.position.v1.>`  | safety        | Feeds the navigational safety detectors (ews, collision).                          |
-| `surveillance-positions` | durable (max deliver 10) | `AIS_POSITION`   | `ais.position.v1.>`  | surveillance  | Feeds the surveillance detectors (transhipment, anomaly, dark, geofence, fishing). |
-| `emission-fuel`          | durable (max deliver 10) | `FUEL`           | `fuel.reading.v1.>`  | emission      | Telemetry fuel readings for segment fuel estimation.                               |
-| `emission-fleet`         | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | emission      | Vessel projection (mmsi → vesselId, orgId) of emission.                            |
-| `safety-fleet`           | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | safety        | Vessel projection (mmsi → vesselId, orgId) of safety.                              |
-| `surveillance-fleet`     | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | surveillance  | Vessel projection (mmsi → vesselId, orgId) of surveillance.                        |
-| `notification-fleet`     | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | notification  | Vessel projection (mmsi → vesselId, orgId) of notification.                        |
-| `telemetry-fleet`        | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | telemetry     | Vessel projection (mmsi → vesselId, orgId) of telemetry.                           |
-| `ais-processor-fleet`    | durable (max deliver 10) | `FLEET`          | `fleet.vessel.v1.>`  | ais-processor | Vessel projection (mmsi → vesselId, orgId) of ais-processor.                       |
-| `safety-zones`           | durable (max deliver 10) | `GEO`            | `geo.zone.v1.>`      | safety        | Zone projection with a spatial index (ZoneIndex) of safety.                        |
-| `surveillance-zones`     | durable (max deliver 10) | `GEO`            | `geo.zone.v1.>`      | surveillance  | Zone projection with a spatial index (ZoneIndex) of surveillance.                  |
-| `notification-alerts`    | durable (max deliver 10) | `ALERTS`         | `alert.v1.>`         | notification  | Stores alerts in the inbox, applies alert rules and pushes them to clients.        |
-| `notification-email`     | durable (max deliver 10) | `NOTIFY`         | `notify.email.v1`    | notification  | Renders and sends transactional e-mails.                                           |
-| `auth-audit`             | durable (max deliver 10) | `AUDIT`          | `audit.v1.>`         | auth          | Writes the central audit log.                                                      |
-| `notification-positions` | ordered (ephemeral)      | `AIS_POSITION`   | `ais.position.v1.>`  | notification  | Realtime position fan-out to WebSocket tile and vessel rooms.                      |
-| `notification-safety`    | ordered (ephemeral)      | `SAFETY`         | `safety.state.v1.>`  | notification  | Realtime safety:states / vessel:safety fan-out to tile and vessel rooms.           |
-| `notification-cii`       | ordered (ephemeral)      | `EMISSION`       | `emission.cii.v1.>`  | notification  | Realtime cii:updated fan-out to organization rooms.                                |
-| `telemetry-mqtt`         | core NATS                | —                | `aisits.telemetry.*` | telemetry     | Raw device JSON from MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway).   |
+| Consumer                       | Kind                       | Stream / subject | Filter                            | Service       | Purpose                                                                                                         |
+| ------------------------------ | -------------------------- | ---------------- | --------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------- |
+| `ais-processor`                | durable (max deliver 10)   | `AIS_RAW`        | `ais.raw.v1.>`                    | ais-processor | Enriches and records raw AIS reports.                                                                           |
+| `emission-positions`           | durable (max deliver 10)   | `AIS_POSITION`   | `ais.position.v1.>`               | emission      | Builds voyage segments (fuel, CO2, CII) from positions.                                                         |
+| `safety-positions`             | durable (max deliver 10)   | `AIS_POSITION`   | `ais.position.v1.>`               | safety        | Feeds the navigational safety detectors (ews, collision).                                                       |
+| `surveillance-positions`       | durable (max deliver 10)   | `AIS_POSITION`   | `ais.position.v1.>`               | surveillance  | Feeds the surveillance detectors (transhipment, anomaly, dark, geofence, fishing).                              |
+| `emission-fuel`                | durable (max deliver 10)   | `FUEL`           | `fuel.reading.v1.>`               | emission      | Telemetry fuel readings for segment fuel estimation.                                                            |
+| `emission-fleet`               | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | emission      | Vessel projection (mmsi → vesselId, orgId) of emission.                                                         |
+| `safety-fleet`                 | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | safety        | Vessel projection (mmsi → vesselId, orgId) of safety.                                                           |
+| `surveillance-fleet`           | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | surveillance  | Vessel projection (mmsi → vesselId, orgId) of surveillance.                                                     |
+| `notification-fleet`           | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | notification  | Vessel projection (mmsi → vesselId, orgId) of notification.                                                     |
+| `telemetry-fleet`              | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | telemetry     | Vessel projection (mmsi → vesselId, orgId) of telemetry.                                                        |
+| `ais-processor-fleet`          | durable (max deliver 10)   | `FLEET`          | `fleet.vessel.v1.>`               | ais-processor | Vessel projection (mmsi → vesselId, orgId) of ais-processor.                                                    |
+| `safety-zones`                 | durable (max deliver 10)   | `GEO`            | `geo.zone.v1.>`                   | safety        | Zone projection with a spatial index (ZoneIndex) of safety.                                                     |
+| `surveillance-zones`           | durable (max deliver 10)   | `GEO`            | `geo.zone.v1.>`                   | surveillance  | Zone projection with a spatial index (ZoneIndex) of surveillance.                                               |
+| `notification-alerts`          | durable (max deliver 10)   | `ALERTS`         | `alert.v1.>`                      | notification  | Stores alerts in the inbox, applies alert rules and pushes them to clients; resolves them on alert.resolved.v1. |
+| `notification-email`           | durable (max deliver 10)   | `NOTIFY`         | `notify.email.v1`                 | notification  | Renders and sends transactional e-mails.                                                                        |
+| `auth-audit`                   | durable (max deliver 10)   | `AUDIT`          | `audit.v1.>`                      | auth          | Writes the central audit log.                                                                                   |
+| `notification-positions`       | ordered (ephemeral)        | `AIS_POSITION`   | `ais.position.v1.>`               | notification  | Realtime position fan-out to WebSocket tile and vessel rooms.                                                   |
+| `notification-safety`          | ordered (ephemeral)        | `SAFETY`         | `safety.state.v1.>`               | notification  | Realtime safety:states / vessel:safety fan-out to tile and vessel rooms.                                        |
+| `notification-cii`             | ordered (ephemeral)        | `EMISSION`       | `emission.cii.v1.>`               | notification  | Realtime cii:updated fan-out to organization rooms.                                                             |
+| `telemetry-mqtt`               | core NATS (queue group)    | —                | `aisits.telemetry.*`              | telemetry     | Raw device JSON from MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway).                                |
+| `notification-realtime-fanout` | core NATS (every instance) | —                | `aisits.notification.realtime.v1` | notification  | alert:raised / alert:updated pushes fanned out to every notification instance (Socket.IO rooms).                |
 
 <!-- generated:consumers:end -->
 
@@ -447,6 +576,9 @@ consumers accept: unknown members are allowed and ignored.
   consumers parse them as plain strings.
 - Removing an event type, a permission, a role or an error code is a major change.
 - Consumers ignore (strip) unknown payload members, so producers may be upgraded first.
+- A **new event type** is a minor release, but a consumer that should act on it must be upgraded
+  before its producers: the kit acknowledges and skips event types a consumer version does not know
+  (e.g. `alert.resolved.v1` in 0.4.0: upgrade notification before safety and surveillance).
 
 ## Development
 
@@ -457,6 +589,7 @@ pnpm typecheck         # tsc (sources, tests, scripts) + the isomorphic build co
 pnpm lint
 pnpm run schemas       # JSON Schemas, asyncapi.json, README tables
 pnpm references:sync   # copy docs/references/*.json of the central repository (validated)
+pnpm references:verify # catalog against the services' @method tags and implementedBy modules
 pnpm check:package     # dist smoke test (ESM + CJS), publint, are-the-types-wrong
 ```
 

@@ -194,29 +194,66 @@ function isNameInUse(error: unknown): boolean {
   );
 }
 
+/**
+ * `true` when JetStream did not answer a publish because no stream binds
+ * its subject (the stream was deleted): `@nats-io/jetstream` reports the
+ * request's "no responders" as `JetStreamNotEnabled`.
+ */
+export function isNoStreamError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'JetStreamNotEnabled' ||
+      /no responders/i.test(error.message))
+  );
+}
+
 /** Rank of a role: a producer ensure supersedes a consumer one. */
 const ROLE_RANK: Record<StreamEnsureRole, number> = {
   consumer: 0,
   producer: 1,
 };
 
+/** The higher of two roles. */
+function strongerRole(
+  a: StreamEnsureRole | undefined,
+  b: StreamEnsureRole,
+): StreamEnsureRole {
+  return a !== undefined && ROLE_RANK[a] > ROLE_RANK[b] ? a : b;
+}
+
+/** Options of {@link StreamManager.ensure}. */
+export interface StreamEnsureOptions {
+  /**
+   * Ensure again even when this process already ensured the stream (it may
+   * have been deleted since): the remembered result is replaced. An ensure
+   * of the same stream that is still in flight is joined instead. Default
+   * `false`.
+   */
+  readonly refresh?: boolean | undefined;
+}
+
+/** A remembered ensure of one stream. */
+interface EnsureEntry {
+  readonly role: StreamEnsureRole;
+  readonly outcome: Promise<StreamEnsureOutcome>;
+  settled: boolean;
+}
+
 /**
  * Ensures contracts streams (spec §7.2) according to the caller's
  * {@link StreamEnsureRole}: creates missing streams, lets producers widen
  * drifted ones, never narrows and never deletes. Retention and storage
  * cannot change on a live stream: a mismatch is logged for an operator.
- * Each stream is ensured once per process and role.
+ * Each stream is ensured once per process and role; `refresh` (used by the
+ * publisher and the consumers when a stream went missing at runtime)
+ * ensures it again, and {@link invalidate} forgets it.
  */
 @Injectable()
 export class StreamManager {
   private readonly logger = new Logger('NatsStreams');
-  private readonly ensured = new Map<
-    StreamName,
-    {
-      readonly role: StreamEnsureRole;
-      readonly outcome: Promise<StreamEnsureOutcome>;
-    }
-  >();
+  private readonly ensured = new Map<StreamName, EnsureEntry>();
+  /** Highest role each stream was ensured with by this process (kept by {@link invalidate}). */
+  private readonly roles = new Map<StreamName, StreamEnsureRole>();
 
   constructor(private readonly client: NatsClient) {}
 
@@ -224,36 +261,72 @@ export class StreamManager {
    * Ensures every named stream (concurrently, once each).
    *
    * @param role `'producer'` (default) for streams the service publishes to,
-   *   `'consumer'` for streams it only reads.
+   *   `'consumer'` for streams it only reads. A refresh keeps the higher role
+   *   this process ensured the stream with: a consumer that re-creates a
+   *   stream the service also produces to applies the producer rules.
+   * @param options `refresh: true` ensures again even if this process
+   *   already did (a stream deleted at runtime is re-created).
    */
   async ensure(
     names: readonly StreamName[],
     role: StreamEnsureRole = 'producer',
+    options: StreamEnsureOptions = {},
   ): Promise<Map<StreamName, StreamEnsureOutcome>> {
     const unique = [...new Set(names)];
     const outcomes = await Promise.all(
-      unique.map((name) => this.ensureOne(name, role)),
+      unique.map((name) =>
+        this.ensureOne(name, role, options.refresh === true),
+      ),
     );
     return new Map(
       unique.map((name, index) => [name, outcomes[index] ?? 'unchanged']),
     );
   }
 
+  /**
+   * Forgets the remembered ensures of `names`: the next {@link ensure}
+   * checks the server again. The role stays known ({@link roleOf}).
+   */
+  invalidate(names: readonly StreamName[]): void {
+    for (const name of names) this.ensured.delete(name);
+  }
+
+  /**
+   * The highest role this process ensured `name` with (`'producer'` for
+   * the streams of `NatsModule.forRoot({ streams })`), or `undefined` when
+   * it never did.
+   */
+  roleOf(name: StreamName): StreamEnsureRole | undefined {
+    return this.roles.get(name);
+  }
+
   private ensureOne(
     name: StreamName,
-    role: StreamEnsureRole,
+    requested: StreamEnsureRole,
+    refresh: boolean,
   ): Promise<StreamEnsureOutcome> {
+    const role = strongerRole(this.roles.get(name), requested);
+    this.roles.set(name, role);
     const previous = this.ensured.get(name);
-    if (previous !== undefined && ROLE_RANK[previous.role] >= ROLE_RANK[role])
-      return previous.outcome;
+    if (previous !== undefined && ROLE_RANK[previous.role] >= ROLE_RANK[role]) {
+      // Without refresh the remembered result stands; a refresh joins an
+      // ensure still in flight (it checks the server anyway).
+      if (!refresh || !previous.settled) return previous.outcome;
+    }
     const outcome = (
       previous?.outcome.catch(() => undefined) ?? Promise.resolve()
     ).then(() => this.apply(STREAMS[name], role));
-    const entry = { role, outcome };
-    // A failed attempt may be retried by the next caller.
-    outcome.catch(() => {
-      if (this.ensured.get(name) === entry) this.ensured.delete(name);
-    });
+    const entry: EnsureEntry = { role, outcome, settled: false };
+    outcome.then(
+      () => {
+        entry.settled = true;
+      },
+      () => {
+        entry.settled = true;
+        // A failed attempt may be retried by the next caller.
+        if (this.ensured.get(name) === entry) this.ensured.delete(name);
+      },
+    );
     this.ensured.set(name, entry);
     return outcome;
   }

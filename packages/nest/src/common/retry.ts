@@ -1,5 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { safeErrorMessage } from '../db/errors.js';
+
 /** Options of {@link retryUntilDeadline}. */
 export interface RetryOptions {
   /** Give up once this much time passed since the first attempt, ms. */
@@ -41,7 +43,12 @@ export async function retryUntilDeadline<T>(
   }
 }
 
-/** Message of an unknown thrown value. */
+/**
+ * Message of an unknown thrown value, safe for logs, dead letter headers and
+ * `outbox.last_error`: a database error gives the driver's primary message
+ * (never drizzle's `Failed query: … params: …`, which holds every bound
+ * value), any other error its message, anything else `String(value)`.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return safeErrorMessage(error);
 }

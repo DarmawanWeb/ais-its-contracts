@@ -47,6 +47,7 @@ export function eventEntityKey(event: AnyEventData): string | undefined {
     case EVENT_TYPES.SAFETY_VESSEL_STATE_UPDATED:
     case EVENT_TYPES.EMISSION_CII_UPDATED:
     case EVENT_TYPES.ALERT_RAISED:
+    case EVENT_TYPES.ALERT_RESOLVED:
       return String(event.data.mmsi);
     case EVENT_TYPES.FLEET_VESSEL_UPSERTED:
     case EVENT_TYPES.FLEET_VESSEL_DELETED:

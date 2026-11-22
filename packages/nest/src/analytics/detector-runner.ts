@@ -12,10 +12,12 @@ import {
   Logger,
   type OnApplicationBootstrap,
   type OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
 
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { errorMessage } from '../common/retry.js';
 import { InjectConfig } from '../config/config.module.js';
@@ -25,6 +27,7 @@ import { DurableConsumerRunner } from '../nats/durable-consumer-runner.js';
 import {
   type DurableHandlerSettings,
   durableHandlerSettings,
+  type ExclusiveConsumerEvent,
   withDurableName,
 } from '../nats/event-handler.decorator.js';
 import {
@@ -32,6 +35,10 @@ import {
   type OrderedSubscription,
 } from '../nats/ordered-consumers.service.js';
 import { StreamManager } from '../nats/stream-manager.js';
+import type {
+  AlertPersistence,
+  AlertPublicationResult,
+} from './alert-emitter.js';
 import { isDetector, RegisterDetector } from './detector.js';
 import { DetectorEngine } from './detector-engine.js';
 import {
@@ -39,6 +46,7 @@ import {
   DetectorRegistry,
 } from './detector-registry.js';
 import {
+  ALERT_PERSISTENCE,
   DETECTOR_RUNNER_OPTIONS,
   type DetectorRunnerOptions,
 } from './detector-runner.options.js';
@@ -54,6 +62,9 @@ const MAINTENANCE_INTERVAL_MS = 30_000;
 /** Longest durable name derived for a detector subset before hashing the ids. */
 const MAX_DURABLE_NAME_LENGTH = 64;
 
+/** Upper bound of the final publication of pending alerts at shutdown, ms. */
+const SHUTDOWN_FLUSH_TIMEOUT_MS = 10_000;
+
 /**
  * Wires the Detector SDK to NATS (spec §18). At module init it discovers the
  * `@RegisterDetector()` providers and registers them (configuration errors
@@ -65,8 +76,18 @@ const MAX_DURABLE_NAME_LENGTH = 64;
  * active instance by default, see `DetectorRunnerOptions.exclusive`) and
  * the detector ticks. A `DETECTORS` subset consumes through its own durable
  * (`<positions>-<sorted ids>`), so differently configured deployments never
- * split the feed. On shutdown it stops ticks and consumers and flushes the
- * vessel state mirror.
+ * split the feed.
+ *
+ * With the exclusive consumer, an instance is active only between its
+ * activation and the end of its pin: when the consumer is pinned to it
+ * (the first position after a failover or at startup), dispatch waits
+ * while `DetectorEngine.activate` publishes pending resolutions, reloads
+ * the open alerts from `AlertPersistence.loadOpen` (replace semantics),
+ * re-seeds the vessel states from the mirror and calls the detectors'
+ * `onActivated`; when another instance takes over, `onDeactivated` runs.
+ * Ticks run only on the active instance. On shutdown it stops ticks and
+ * consumers (a graceful stop hands the pin over at once), publishes what is
+ * still pending and flushes the vessel state mirror.
  */
 @Injectable()
 export class DetectorRunner
@@ -89,6 +110,9 @@ export class DetectorRunner
     @InjectConfig() private readonly config: BaseConfig,
     @Inject(DETECTOR_RUNNER_OPTIONS)
     private readonly options: DetectorRunnerOptions,
+    @Optional()
+    @Inject(ALERT_PERSISTENCE)
+    private readonly persistence: AlertPersistence | null = null,
   ) {}
 
   /** Discovers and registers the detectors (no connection needed). */
@@ -113,6 +137,23 @@ export class DetectorRunner
 
   /** Restores state, loads the projections, then starts consuming positions and ticking. */
   async onApplicationBootstrap(): Promise<void> {
+    const settings = this.positionsSettings();
+    if (settings.definition.stream !== 'AIS_POSITION') {
+      throw new DetectorRegistrationError(
+        `The positions consumer ${settings.definition.durableName} reads ${settings.definition.stream}, not AIS_POSITION`,
+      );
+    }
+    const exclusive = settings.exclusive !== undefined;
+    if (exclusive) {
+      // Active only once the consumer is pinned here and the activation ran.
+      this.registry.setActive(false);
+      if (this.persistence?.loadOpen === undefined) {
+        this.logger.warn(
+          'The alert persistence hook has no loadOpen(): after a failover the active instance cannot ' +
+            'restore the open alerts (they are raised again and their resolutions are missed)',
+        );
+      }
+    }
     const restored = await this.engine.services.alerts.restoreFromPersistence();
     const warmed = await this.vessels.warmUp();
     // Seeds of the neighbour index; the backlog replaces them as it arrives.
@@ -137,24 +178,29 @@ export class DetectorRunner
       ]);
     }
 
-    const settings = this.positionsSettings();
-    if (settings.definition.stream !== 'AIS_POSITION') {
-      throw new DetectorRegistrationError(
-        `The positions consumer ${settings.definition.durableName} reads ${settings.definition.stream}, not AIS_POSITION`,
-      );
-    }
     this.positions = new DurableConsumerRunner(
       this.runtime,
       settings,
       (event) => this.onPosition(event),
       'DetectorRunner.onPosition',
+      exclusive
+        ? {
+            onActivated: (event) => this.activate(event),
+            onDeactivated: (event) => this.deactivate(event),
+          }
+        : {},
     );
     await this.positions.start();
     this.startTicks();
     this.startMaintenance();
   }
 
-  /** Stops ticks, the position consumer and the projections; flushes the state mirror. */
+  /**
+   * Stops ticks, the position consumer (an exclusive one deactivates and
+   * hands its pin over) and the projections, publishes the alerts and
+   * resolutions still pending (before the NATS connection drains), and
+   * flushes the state mirror.
+   */
   async beforeApplicationShutdown(): Promise<void> {
     this.stopping = true;
     for (const timer of this.timers.splice(0)) clearInterval(timer);
@@ -162,7 +208,55 @@ export class DetectorRunner
     await Promise.all(
       this.projections.splice(0).map((projection) => projection.stop(5_000)),
     );
+    const flushed = await Promise.race([
+      this.engine.services.alerts.flush(),
+      sleep(SHUTDOWN_FLUSH_TIMEOUT_MS, undefined, { ref: false }),
+    ]);
+    if (flushed === undefined) {
+      this.logger.warn(
+        `Pending alert publications did not finish within ${SHUTDOWN_FLUSH_TIMEOUT_MS} ms`,
+      );
+    } else {
+      this.logUnpublished(flushed, 'at shutdown');
+    }
     await this.vessels.flush();
+  }
+
+  /** The consumer was pinned to this instance: activate before its first position is handled. */
+  private async activate(event: ExclusiveConsumerEvent): Promise<void> {
+    const persistence = this.persistence;
+    const activation = await this.engine.activate({
+      loadOpen: persistence?.loadOpen?.bind(persistence),
+    });
+    const { flushed } = activation;
+    this.logger.log(
+      `Active instance of ${event.consumer}: ` +
+        (activation.reloaded
+          ? `reloaded the open alerts (${activation.restored} open, ${activation.forgotten} ended elsewhere)`
+          : 'kept the open alerts (no loadOpen)') +
+        `, published ${flushed.published + flushed.resolutionsPublished} pending alert event(s)` +
+        `, re-seeded ${activation.vesselsReseeded} vessel state(s)`,
+    );
+    this.logUnpublished(flushed, 'on activation');
+  }
+
+  /** Another instance took over, or this one stops. */
+  private async deactivate(event: ExclusiveConsumerEvent): Promise<void> {
+    const flushed = await this.engine.deactivate();
+    this.logger.log(
+      event.reason === 'stopped'
+        ? `Stopping the active instance of ${event.consumer}`
+        : `Another instance is active for ${event.consumer}: detector ticks paused`,
+    );
+    this.logUnpublished(flushed, 'on deactivation');
+  }
+
+  private logUnpublished(result: AlertPublicationResult, when: string): void {
+    const failed = result.failed + result.resolutionsFailed;
+    if (failed > 0)
+      this.logger.warn(
+        `${failed} alert event(s) still unpublished ${when} (retried)`,
+      );
   }
 
   /** Settings of the position consumer: kit prefix, detector subset and exclusivity applied. */
@@ -235,7 +329,8 @@ export class DetectorRunner
   }
 
   /**
-   * Every 30 s: retry unpublished alerts, forget expired alert cooldowns and
+   * Every 30 s (on every instance): retry unpublished alerts, publish the
+   * resolutions whose cooldown ended, forget expired alert cooldowns and
    * drop neighbour-index entries older than the pair search window.
    */
   private startMaintenance(): void {
@@ -246,15 +341,25 @@ export class DetectorRunner
       const { alerts, pairs, clock } = this.engine.services;
       alerts
         .retryPending()
-        .then(({ published, failed }) => {
-          if (published > 0)
-            this.logger.log(`Published ${published} pending alert(s)`);
-          if (failed > 0)
-            this.logger.warn(`${failed} alert(s) still unpublished`);
-          alerts.prune(clock());
-          // Event time: a consumer catching up on a backlog keeps its neighbours.
-          pairs.prune();
-        })
+        .then(
+          ({ published, failed, resolutionsPublished, resolutionsFailed }) => {
+            if (published > 0)
+              this.logger.log(`Published ${published} pending alert(s)`);
+            if (failed > 0)
+              this.logger.warn(`${failed} alert(s) still unpublished`);
+            if (resolutionsFailed > 0)
+              this.logger.warn(
+                `${resolutionsFailed} alert resolution(s) still unpublished`,
+              );
+            if (resolutionsPublished > 0)
+              this.logger.debug(
+                `Published ${resolutionsPublished} alert resolution(s) after their cooldown`,
+              );
+            alerts.prune(clock());
+            // Event time: a consumer catching up on a backlog keeps its neighbours.
+            pairs.prune();
+          },
+        )
         .catch((error: unknown) => {
           this.logger.error(`Maintenance failed: ${errorMessage(error)}`);
         })
@@ -273,7 +378,8 @@ export class DetectorRunner
         continue;
       let running = false;
       const timer = setInterval(() => {
-        if (running || this.stopping) return;
+        // Only the active instance ticks (standbys would duplicate alerts).
+        if (running || this.stopping || !this.engine.active) return;
         running = true;
         this.engine
           .tick(this.engine.services.clock(), [entry.descriptor.id])

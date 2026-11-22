@@ -3,6 +3,7 @@ import {
   HttpException,
   NotFoundException,
 } from '@nestjs/common';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -163,5 +164,34 @@ describe('toProblemResponse (RFC 9457)', () => {
       toProblemResponse(new HttpException('upstream exploded', 502), context)
         .body.detail,
     ).toBeUndefined();
+  });
+
+  it('shows only the driver message of a database error outside production (CORE-1)', () => {
+    const driver = Object.assign(
+      new Error(
+        'duplicate key value violates unique constraint "users_email_key"',
+      ),
+      {
+        severity: 'ERROR',
+        code: '23505',
+        detail: 'Key (email)=(alice@example.com) already exists.',
+      },
+    );
+    const error = new DrizzleQueryError(
+      'insert into "users" ("email") values ($1)',
+      ['alice@example.com'],
+      driver,
+    );
+    const shown = toProblemResponse(error, {
+      ...context,
+      exposeInternalErrors: true,
+    });
+    expect(shown.body.detail).toBe(
+      'duplicate key value violates unique constraint "users_email_key"',
+    );
+    expect(JSON.stringify(shown.body)).not.toContain('alice@example.com');
+    expect(toProblemResponse(error, context).body.detail).toBe(
+      'An unexpected error occurred',
+    );
   });
 });

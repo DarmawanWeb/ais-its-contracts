@@ -44,6 +44,53 @@ export interface TestNats {
   readonly url: string;
   /** HTTP monitoring endpoint (`/jsz`, `/connz`, …). */
   readonly monitorUrl: string;
+  /**
+   * `mqtt://host:port` of the MQTT gateway (an MQTT PUBLISH on
+   * `aisits/telemetry/<id>` becomes the core message `aisits.telemetry.<id>`);
+   * set only when started with `nats: { mqtt: true }`.
+   */
+  readonly mqttUrl?: string | undefined;
+}
+
+/** Settings of the test NATS server (`TestInfraOptions.nats`). */
+export interface TestNatsOptions {
+  /** Enables the MQTT gateway on port 1883 (`TestNats.mqttUrl`). Default `false`. */
+  readonly mqtt?: boolean | undefined;
+  /**
+   * `max_payload` of the server, e.g. `'1MB'` or `'1048576'`. Default
+   * {@link DEFAULT_TEST_NATS_MAX_PAYLOAD} (`4MB`, as `infra/nats/nats.conf`).
+   */
+  readonly maxPayload?: string | undefined;
+}
+
+/** Default `max_payload` of the test NATS: 4 MB, as the platform's `infra/nats/nats.conf`. */
+export const DEFAULT_TEST_NATS_MAX_PAYLOAD = '4MB';
+
+/** A NATS size: digits with an optional `K`, `KB`, `M`, `MB`, `G` or `GB` unit. */
+const NATS_SIZE = /^\d+(?:[KMG]B?)?$/i;
+
+/**
+ * The configuration file of the test NATS: a stable `server_name`,
+ * JetStream, the client and monitoring ports, `max_payload` and, when
+ * asked for, the MQTT gateway on 1883.
+ *
+ * @throws {RangeError} for a `maxPayload` that is not a NATS size.
+ */
+export function testNatsConfig(options: TestNatsOptions = {}): string {
+  const maxPayload = options.maxPayload ?? DEFAULT_TEST_NATS_MAX_PAYLOAD;
+  if (!NATS_SIZE.test(maxPayload))
+    throw new RangeError(
+      `Invalid NATS maxPayload "${maxPayload}": expected e.g. "4MB" or "1048576"`,
+    );
+  return [
+    'server_name: aisits-test-nats',
+    'port: 4222',
+    'http_port: 8222',
+    `max_payload: ${maxPayload}`,
+    'jetstream { store_dir: /tmp/nats-jetstream }',
+    ...(options.mqtt === true ? ['mqtt { port: 1883 }'] : []),
+    '',
+  ].join('\n');
 }
 
 /** Valkey. */
@@ -80,7 +127,8 @@ export interface TestServices {
 /** Which services to start. */
 export interface TestInfraOptions {
   readonly postgres?: boolean | undefined;
-  readonly nats?: boolean | undefined;
+  /** NATS with JetStream; an object configures it ({@link TestNatsOptions}). */
+  readonly nats?: boolean | TestNatsOptions | undefined;
   readonly redis?: boolean | undefined;
   readonly s3?: boolean | undefined;
   readonly smtp?: boolean | undefined;
@@ -88,10 +136,15 @@ export interface TestInfraOptions {
   readonly startupTimeoutMs?: number | undefined;
 }
 
-/** The started services (exactly those requested) and `stop()`. */
+/**
+ * The started services (exactly those requested: `true`, or an options
+ * object for NATS) and `stop()`.
+ */
 export type StartedTestInfra<Options extends TestInfraOptions> = {
   readonly [
-    Name in keyof TestServices as Options[Name] extends true ? Name : never
+    Name in keyof TestServices as Options[Name] extends true | object
+      ? Name
+      : never
   ]: TestServices[Name];
 } & {
   /** Stops every container (idempotent). */
@@ -208,25 +261,40 @@ async function startPostgres(
   return [container, { adminUrl, host, port, database: TEST_DATABASE }];
 }
 
-async function startNats(
+/** Where the generated configuration is copied in the NATS container. */
+const TEST_NATS_CONFIG_FILE = '/etc/nats/aisits-test.conf';
+
+function startNats(
+  options: TestNatsOptions,
+): (
   timeoutMs: number,
   track: (container: StartedTestContainer) => void,
-): Promise<[StartedTestContainer, TestNats]> {
-  const container = await testContainer(TEST_IMAGES.nats)
-    .withCommand(['-js', '-m', '8222'])
-    .withExposedPorts(4222, 8222)
-    .withWaitStrategy(Wait.forLogMessage(/Server is ready/))
-    .withStartupTimeout(timeoutMs)
-    .start();
-  track(container);
-  const host = container.getHost();
-  return [
-    container,
-    {
-      url: `nats://${host}:${container.getMappedPort(4222)}`,
-      monitorUrl: `http://${host}:${container.getMappedPort(8222)}`,
-    },
-  ];
+) => Promise<[StartedTestContainer, TestNats]> {
+  const config = testNatsConfig(options);
+  const mqtt = options.mqtt === true;
+  return async (timeoutMs, track) => {
+    const container = await testContainer(TEST_IMAGES.nats)
+      .withCopyContentToContainer([
+        { content: config, target: TEST_NATS_CONFIG_FILE },
+      ])
+      .withCommand(['-c', TEST_NATS_CONFIG_FILE])
+      .withExposedPorts(4222, 8222, ...(mqtt ? [1883] : []))
+      .withWaitStrategy(Wait.forLogMessage(/Server is ready/))
+      .withStartupTimeout(timeoutMs)
+      .start();
+    track(container);
+    const host = container.getHost();
+    return [
+      container,
+      {
+        url: `nats://${host}:${container.getMappedPort(4222)}`,
+        monitorUrl: `http://${host}:${container.getMappedPort(8222)}`,
+        ...(mqtt
+          ? { mqttUrl: `mqtt://${host}:${container.getMappedPort(1883)}` }
+          : {}),
+      },
+    ];
+  };
 }
 
 async function startRedis(
@@ -316,12 +384,14 @@ async function startSmtp(
 
 /**
  * Starts the requested infrastructure with testcontainers, in parallel, using
- * the platform's image tags ({@link TEST_IMAGES}). Set
+ * the platform's image tags ({@link TEST_IMAGES}). NATS runs with a
+ * generated configuration ({@link testNatsConfig}: `max_payload` 4 MB as in
+ * the platform's `nats.conf`, optionally the MQTT gateway). Set
  * `TESTCONTAINERS_RYUK_DISABLED=true` where the Ryuk image is unavailable,
  * and always call `stop()` (e.g. in `afterAll`).
  *
  * @example
- * const infra = await startTestInfra({ postgres: true, nats: true });
+ * const infra = await startTestInfra({ postgres: true, nats: { mqtt: true } });
  * const databaseUrl = await provisionServiceSchema(infra.postgres.adminUrl, 'fleet');
  * // …
  * await infra.stop();
@@ -342,7 +412,9 @@ export async function startTestInfra<const Options extends TestInfraOptions>(
     >
   > = {
     ...(options.postgres === true ? { postgres: startPostgres } : {}),
-    ...(options.nats === true ? { nats: startNats } : {}),
+    ...(options.nats === true || typeof options.nats === 'object'
+      ? { nats: startNats(options.nats === true ? {} : options.nats) }
+      : {}),
     ...(options.redis === true ? { redis: startRedis } : {}),
     ...(options.s3 === true ? { s3: startS3 } : {}),
     ...(options.smtp === true ? { smtp: startSmtp } : {}),

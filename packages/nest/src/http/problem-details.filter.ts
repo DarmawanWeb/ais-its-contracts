@@ -9,6 +9,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { InjectConfig } from '../config/config.module.js';
 import type { BaseConfig } from '../config/env-schema.js';
+import { sanitizeError } from '../db/errors.js';
 import { toProblemResponse } from '../errors/problem-mapper.js';
 import { currentTraceId } from '../telemetry/trace-context.js';
 
@@ -32,7 +33,8 @@ function isEmittingClient(value: unknown): value is EmittingClient {
  * The global exception filter (spec §5): every error becomes RFC 9457
  * problem details with `Content-Type: application/problem+json`, the stable
  * `code`, `traceId`, `requestId` and `instance`. Unexpected errors are logged
- * with their stack and answered `500 INTERNAL_ERROR` (generic detail in
+ * with their stack (as `err`, database errors without their bound values:
+ * `sanitizeError`) and answered `500 INTERNAL_ERROR` (generic detail in
  * production).
  */
 @Catch()
@@ -46,7 +48,8 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const exposeInternalErrors = this.config.NODE_ENV !== 'production';
     if (host.getType() === 'ws') {
       const problem = toProblemResponse(exception, { exposeInternalErrors });
-      if (problem.unexpected) this.logger.error(exception);
+      if (problem.unexpected)
+        this.logger.error({ err: sanitizeError(exception) });
       const client: unknown = host.switchToWs().getClient();
       if (isEmittingClient(client))
         client.emit(WS_EXCEPTION_EVENT, problem.body);
@@ -65,7 +68,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     });
 
     if (problem.unexpected) {
-      this.logger.error(exception);
+      this.logger.error({ err: sanitizeError(exception) });
     } else {
       this.logger.debug(
         `${problem.status} ${problem.body.code}: ${problem.body.detail ?? problem.body.title}`,

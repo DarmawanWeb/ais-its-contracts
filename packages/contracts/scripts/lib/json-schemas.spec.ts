@@ -1,3 +1,4 @@
+import { Ajv } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import ajvFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
@@ -6,7 +7,8 @@ import {
   EVENT_EXAMPLES,
   exampleEnvelope,
 } from '../../src/events/__fixtures__/examples.js';
-import { EVENT_TYPE_LIST } from '../../src/events/index.js';
+import { CORE_SUBSCRIPTIONS, EVENT_TYPE_LIST } from '../../src/events/index.js';
+import { REALTIME_ALERT_FANOUT_EXAMPLE } from '../../src/realtime/__fixtures__/fanout.js';
 import { buildAsyncApiDocument } from './asyncapi.js';
 import { asJsonObject } from './json.js';
 import {
@@ -207,6 +209,67 @@ describe('generated AsyncAPI document', () => {
       'audit.v1.{service}',
       'dlq.{stream}.{consumer}',
       'aisits.telemetry.{deviceId}',
+      'aisits.notification.realtime.v1',
+    ]);
+  });
+
+  it('describes one channel, message and receive operation per core subscription', () => {
+    const operations = asJsonObject(document.operations, 'operations');
+    const schemas = asJsonObject(components.schemas, 'schemas');
+    expect(
+      CORE_SUBSCRIPTIONS.map((subscription) => {
+        const operation = asJsonObject(
+          operations[`receive-${subscription.name}`],
+          subscription.name,
+        );
+        return [
+          subscription.name,
+          asJsonObject(operation.channel, 'channel').$ref,
+          asJsonObject(operation['x-ais-its-consumer'], 'consumer').delivery,
+        ];
+      }),
+    ).toEqual([
+      ['telemetry-mqtt', '#/channels/telemetryMqtt', 'queue'],
+      [
+        'notification-realtime-fanout',
+        '#/channels/notificationRealtime',
+        'fanout',
+      ],
+    ]);
+    const fanout = asJsonObject(messages.RealtimeAlertFanout, 'fanout message');
+    expect(fanout.payload).toEqual({
+      $ref: '#/components/schemas/RealtimeAlertFanout',
+    });
+    const ajv = new Ajv({ strict: false });
+    addFormats(ajv);
+    const validate = ajv.compile(
+      asJsonObject(schemas.RealtimeAlertFanout, 'fanout schema'),
+    );
+    expect(validate(REALTIME_ALERT_FANOUT_EXAMPLE)).toBe(true);
+    expect(validate({ ...REALTIME_ALERT_FANOUT_EXAMPLE, rooms: [] })).toBe(
+      false,
+    );
+    const telemetry = asJsonObject(channels.telemetryMqtt, 'telemetry channel');
+    expect(telemetry.address).toBe('aisits.telemetry.{deviceId}');
+    expect(Object.keys(asJsonObject(telemetry.messages, 'messages'))).toEqual([
+      'DeviceTelemetry',
+    ]);
+  });
+
+  it('documents raise and resolve on the alert channel', () => {
+    const alert = asJsonObject(channels.alert, 'alert channel');
+    expect(Object.keys(asJsonObject(alert.messages, 'messages'))).toEqual([
+      'AlertRaisedV1',
+      'AlertResolvedV1',
+    ]);
+    const operations = asJsonObject(document.operations, 'operations');
+    const receive = asJsonObject(
+      operations['receive-notification-alerts'],
+      'notification-alerts',
+    );
+    expect(receive.messages).toEqual([
+      { $ref: '#/channels/alert/messages/AlertRaisedV1' },
+      { $ref: '#/channels/alert/messages/AlertResolvedV1' },
     ]);
   });
 

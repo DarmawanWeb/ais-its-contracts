@@ -1,7 +1,8 @@
 /**
  * PostgreSQL + TimescaleDB + PostGIS access (spec §6): `DatabaseModule`,
- * injection decorators, transactions, PostGIS helpers for drizzle and the
- * forward-only SQL migrator.
+ * injection decorators, transactions, SQLSTATE helpers and error
+ * sanitizing, raw-row helpers, continuous aggregate refreshes, PostGIS
+ * helpers for drizzle and the forward-only SQL migrator.
  *
  * @packageDocumentation
  */
@@ -11,6 +12,23 @@ export {
 } from './database-lifecycle.js';
 export { DatabaseHealthIndicator } from './database.health.js';
 export { DatabaseModule } from './database.module.js';
+export {
+  DEFAULT_REFRESH_RETRIES,
+  refreshContinuousAggregate,
+  type RefreshContinuousAggregateOptions,
+  type RefreshContinuousAggregateResult,
+  type RefreshWindowBound,
+} from './continuous-aggregates.js';
+export {
+  databaseErrorInfo,
+  type DatabaseErrorInfo,
+  isUniqueViolation,
+  PG_SQLSTATES,
+  type PgSqlState,
+  SanitizedDatabaseError,
+  sanitizeError,
+  sqlStateOf,
+} from './errors.js';
 export {
   type IdempotencyKey,
   type IdempotencyOptions,
@@ -28,6 +46,7 @@ export {
   migrationChecksum,
   type MigrationFile,
   MigrationFileError,
+  MigrationsDirectoryNotFoundError,
   NO_TRANSACTION_MARKER,
   parseMigration,
   readMigrationFiles,
@@ -71,6 +90,7 @@ export {
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- deprecated alias kept for compatibility
   withinMeters,
 } from './postgis.js';
+export { rowDate, rowDateOrNull } from './rows.js';
 export {
   type Database,
   DATABASE_OPTIONS,

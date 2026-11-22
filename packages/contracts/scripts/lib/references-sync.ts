@@ -140,21 +140,26 @@ async function readIfExists(file: string): Promise<string | null> {
   }
 }
 
+/** Outcome of {@link readCatalog}. */
+export type ReadCatalogOutcome =
+  | { readonly kind: 'missing'; readonly files: readonly string[] }
+  | { readonly kind: 'invalid'; readonly issues: readonly FieldError[] }
+  | { readonly kind: 'valid'; readonly catalog: MethodologyCatalog };
+
 /**
- * Copies the methodology catalog into the package: reads both JSON files
- * (each an array, or `{ "<collection>": [...] }`),
- * validates them with {@link validateCatalog} (zod schemas, unique ids, no
- * dangling `referenceIds`) and writes the generated data modules. Nothing is
- * written when a file is missing or invalid, or in `check` mode.
+ * Reads the methodology catalog of `sourceDir`: both JSON files (each an
+ * array, or `{ "<collection>": [...] }`), validated with
+ * {@link validateCatalog} (zod schemas, unique ids, no dangling
+ * `referenceIds`, every method cites a source or is marked `needsCitation`).
  */
-export async function syncReferences(
-  options: SyncReferencesOptions,
-): Promise<SyncReferencesOutcome> {
+export async function readCatalog(
+  sourceDir: string,
+): Promise<ReadCatalogOutcome> {
   const contents = new Map<Collection, unknown>();
   const missing: string[] = [];
   const issues: FieldError[] = [];
   for (const collection of COLLECTIONS) {
-    const file = path.join(options.sourceDir, CATALOG_FILES[collection]);
+    const file = path.join(sourceDir, CATALOG_FILES[collection]);
     const result = await readCatalogFile(file);
     if (result === null) missing.push(file);
     else if ('issue' in result) issues.push(result.issue);
@@ -167,14 +172,24 @@ export async function syncReferences(
     references: contents.get('references'),
     methods: contents.get('methods'),
   });
-  if (!validation.success) {
-    return { kind: 'invalid', issues: validation.issues };
-  }
+  return validation.success
+    ? { kind: 'valid', catalog: validation.catalog }
+    : { kind: 'invalid', issues: validation.issues };
+}
 
-  const modules = await renderDataModules(
-    validation.catalog,
-    options.packageDir,
-  );
+/**
+ * Copies the methodology catalog into the package: reads and validates both
+ * JSON files with {@link readCatalog} and writes the generated data modules.
+ * Nothing is written when a file is missing or invalid, or in `check` mode.
+ */
+export async function syncReferences(
+  options: SyncReferencesOptions,
+): Promise<SyncReferencesOutcome> {
+  const read = await readCatalog(options.sourceDir);
+  if (read.kind !== 'valid') return read;
+  const { catalog } = read;
+
+  const modules = await renderDataModules(catalog, options.packageDir);
   const changed: string[] = [];
   for (const [relativePath, content] of modules) {
     const file = path.join(options.packageDir, relativePath);
@@ -185,7 +200,7 @@ export async function syncReferences(
   return {
     kind: options.check ? 'checked' : 'synced',
     changed,
-    references: validation.catalog.references.length,
-    methods: validation.catalog.methods.length,
+    references: catalog.references.length,
+    methods: catalog.methods.length,
   };
 }

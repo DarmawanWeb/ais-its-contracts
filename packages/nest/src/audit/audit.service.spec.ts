@@ -167,6 +167,53 @@ describe('AuditService', () => {
     );
   });
 
+  it('normalizes the request ip for inet columns (CORE-9)', () => {
+    const { service } = auditService();
+    const ipOf = (ip: string | undefined) =>
+      service.buildRecord({ action: 'vessel.update' }, user, { ip }).ip;
+    expect(ipOf('1.2.3.4:5678')).toBe('1.2.3.4');
+    expect(ipOf('[2001:db8::1]:443')).toBe('2001:db8::1');
+    expect(ipOf('fe80::1%eth0')).toBe('fe80::1');
+    expect(ipOf('foo')).toBeNull();
+    expect(ipOf('')).toBeNull();
+    expect(ipOf(undefined)).toBeNull();
+  });
+
+  it('enqueues the record in the caller transaction instead of publishing (CORE-10)', async () => {
+    const { service, published } = auditService();
+    const queries: { text: string; values: unknown[] }[] = [];
+    const client = {
+      query: (text: string, values: unknown[]) => {
+        queries.push({ text, values });
+        return Promise.resolve({ rows: [], rowCount: 1 });
+      },
+    };
+    const id = await service.enqueue(
+      client as never,
+      { action: 'user.mfa_disable', targetType: 'user', targetId: USER },
+      user,
+      { ip: '[2001:db8::1]:443' },
+      { table: 'audit_outbox' },
+    );
+    expect(published).toHaveLength(0);
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.text).toMatch(/^INSERT INTO "audit_outbox" /);
+    const [rowId, type, , data] = queries[0]?.values ?? [];
+    expect(rowId).toBe(id);
+    expect(type).toBe('audit.recorded.v1');
+    expect(AuditRecordedV1Schema.parse(JSON.parse(String(data)))).toMatchObject(
+      {
+        action: 'user.mfa_disable',
+        actorId: USER,
+        ip: '2001:db8::1',
+      },
+    );
+    // Unlike record(), an invalid entry throws (the transaction fails with it).
+    await expect(
+      service.enqueue(client as never, { action: 'Not An Action' }, user),
+    ).rejects.toThrow();
+  });
+
   it('never throws: a publish failure resolves false and is counted', async () => {
     const { service, metrics } = auditService(new Error('no responders'));
     await expect(

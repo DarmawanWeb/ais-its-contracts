@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { newId } from '@darmawanweb/ais-its-contracts/domain';
 import {
   type AnyEventEnvelope,
   type DurableConsumerDefinition,
@@ -8,7 +9,7 @@ import {
   STREAMS,
   subjects,
 } from '@darmawanweb/ais-its-contracts/events';
-import { Module } from '@nestjs/common';
+import { Injectable, Module } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { nanos } from '@nats-io/transport-node';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -20,9 +21,14 @@ import {
   durableHandlerSettings,
   NatsConsumerRuntime,
 } from '../src/internal/index.js';
+import type { DurableConsumerRunnerOptions } from '../src/nats/durable-consumer-runner.js';
 import {
   type EventContext,
+  EventConsumers,
+  EventHandler,
   EventPublisher,
+  type ExclusiveConsumerEvent,
+  type ExclusiveConsumerListener,
   NatsClient,
   NatsHealthIndicator,
   NatsModule,
@@ -64,10 +70,49 @@ interface Delivery {
   readonly minute: number;
   readonly deliveryCount: number;
   readonly runner: string;
+  /** `performance.now()` when the handler saw the message. */
+  readonly at: number;
+}
+
+/** The pinned client id of the exclusive consumer group (NATS >= 2.11). */
+function pinnedClientId(info: unknown): string | undefined {
+  const groups = (info as { priority_groups?: { pinned_client_id?: string }[] })
+    .priority_groups;
+  return groups?.[0]?.pinned_client_id;
 }
 
 @Module({ imports: [NatsModule.forRoot({ streams: ['FUEL'] })] })
 class NatsOnlyModule {}
+
+const LISTENER_MMSI = base + 8;
+const listenerConsumer = fuelConsumer('listener', LISTENER_MMSI);
+
+/** An exclusive `@EventHandler` provider that reloads its state on activation. */
+@Injectable()
+class ExclusiveProcessor implements ExclusiveConsumerListener {
+  readonly log: string[] = [];
+  readonly events: ExclusiveConsumerEvent[] = [];
+
+  @EventHandler({
+    consumer: listenerConsumer,
+    exclusive: { pinnedTtlMs: 30_000 },
+  })
+  onReading(event: AnyEventEnvelope): void {
+    if (event.type === EVENT_TYPES.FUEL_READING_RECORDED)
+      this.log.push(`handled:${event.data.fuelMeTon}`);
+  }
+
+  async onConsumerActivated(event: ExclusiveConsumerEvent): Promise<void> {
+    this.events.push(event);
+    await sleep(200); // e.g. reload open alerts
+    this.log.push('activated');
+  }
+
+  onConsumerDeactivated(event: ExclusiveConsumerEvent): void {
+    this.events.push(event);
+    this.log.push(`deactivated:${event.reason}`);
+  }
+}
 
 describe('durable consumers', () => {
   let app: NestFastifyApplication;
@@ -84,14 +129,20 @@ describe('durable consumers', () => {
       readonly label?: string;
       readonly delayMs?: number;
       readonly ackWaitMs?: number;
+      readonly backoffMs?: readonly number[];
       readonly exclusive?: { readonly pinnedTtlMs: number };
+      readonly hooks?: DurableConsumerRunnerOptions;
+      /** Receives `<label>:handled:<minute>`. */
+      readonly log?: string[];
     } = {},
   ): Promise<DurableConsumerRunner> {
+    const label = options.label ?? 'main';
     const runner = new DurableConsumerRunner(
       runtime,
       durableHandlerSettings({
         consumer: definition,
         ackWaitMs: options.ackWaitMs,
+        backoffMs: options.backoffMs,
         exclusive: options.exclusive,
       }),
       async (event: AnyEventEnvelope, context: EventContext) => {
@@ -99,15 +150,28 @@ describe('durable consumers', () => {
         deliveries.push({
           minute: event.data.fuelMeTon,
           deliveryCount: context.deliveryCount,
-          runner: options.label ?? 'main',
+          runner: label,
+          at: performance.now(),
         });
+        options.log?.push(`${label}:handled:${event.data.fuelMeTon}`);
         if (options.delayMs !== undefined) await sleep(options.delayMs);
       },
       'test.handler',
+      options.hooks,
     );
     await runner.start();
     runners.push(runner);
     return runner;
+  }
+
+  /** Publishes reading `minute` of `mmsi` and returns `performance.now()` before it. */
+  async function publishReading(mmsi: number, minute: number): Promise<number> {
+    const at = performance.now();
+    await publisher.publishEvent(
+      EVENT_TYPES.FUEL_READING_RECORDED,
+      reading(mmsi, minute),
+    );
+    return at;
   }
 
   beforeAll(async () => {
@@ -239,6 +303,280 @@ describe('durable consumers', () => {
     expect(new Set(failover)).toEqual(new Set([active.has('a') ? 'b' : 'a']));
     expect(standby.health().healthy).toBe(true);
   }, 60_000);
+
+  it('re-creates its deleted stream and consumer and resumes consuming (NATS-3)', async () => {
+    const mmsi = base + 10;
+    const definition: DurableConsumerDefinition = {
+      durableName: uniqueName('cii-gone'),
+      stream: 'EMISSION',
+      filterSubjects: [subjects.ciiUpdated(mmsi)],
+      service: 'notification',
+      eventTypes: [EVENT_TYPES.EMISSION_CII_UPDATED],
+      maxDeliver: 10,
+      description: 'integration test consumer of a deleted stream',
+    };
+    const years: number[] = [];
+    const runner = new DurableConsumerRunner(
+      runtime,
+      durableHandlerSettings({ consumer: definition }),
+      (event: AnyEventEnvelope) => {
+        if (event.type === EVENT_TYPES.EMISSION_CII_UPDATED)
+          years.push(event.data.year);
+      },
+      'test.cii',
+    );
+    await runner.start();
+    runners.push(runner);
+    const cii = (year: number) => ({
+      mmsi,
+      vesselId: newId(),
+      orgId: newId(),
+      year,
+      asOf: `${year}-11-20T08:30:00.000Z`,
+      distanceNm: 61_500,
+      fuelMeTon: 5200,
+      fuelAeTon: 380,
+      co2Ton: 17_376.12,
+      attained: 5.4334,
+      required: 4.92,
+      rating: 1.1044,
+      grade: 'D' as const,
+      lastMethod: 'first_formula' as const,
+    });
+    await publisher.publishEvent(EVENT_TYPES.EMISSION_CII_UPDATED, cii(2025));
+    await waitFor(() => years.length === 1);
+
+    // Deleting the stream deletes its consumers too.
+    await client.manager.streams.delete('EMISSION');
+    // This process only consumes EMISSION: the runner re-creates both.
+    await waitFor(
+      () =>
+        client.manager.consumers.info('EMISSION', definition.durableName).then(
+          () => true,
+          () => false,
+        ),
+      { timeoutMs: 45_000 },
+    );
+    await publisher.publishEvent(EVENT_TYPES.EMISSION_CII_UPDATED, cii(2026));
+    await waitFor(() => years.includes(2026), { timeoutMs: 45_000 });
+    expect(runner.health().healthy).toBe(true);
+    const metrics = await app.get(MetricsService).render();
+    expect(metrics).toMatch(
+      new RegExp(
+        `aisits_events_consumer_recoveries_total\\{stream="EMISSION",consumer="${definition.durableName}",outcome="recreated"\\} [1-9]`,
+      ),
+    );
+  }, 90_000);
+
+  it('keeps the pin of an idle exclusive consumer: pulls renew it three times per TTL (NATS-4)', async () => {
+    const mmsi = base + 4;
+    const definition = fuelConsumer('idle-pin', mmsi);
+    const deliveries: Delivery[] = [];
+    const runner = await startRunner(definition, deliveries, {
+      exclusive: { pinnedTtlMs: 3000 },
+    });
+    await publishReading(mmsi, 1);
+    await waitFor(() => deliveries.length === 1);
+    expect(runner.state).toBe('active');
+    const pinned = pinnedClientId(
+      await client.manager.consumers.info('FUEL', definition.durableName),
+    );
+    expect(pinned).toBeDefined();
+    const states = new Set<string>();
+    const idleUntil = Date.now() + 12_000;
+    while (Date.now() < idleUntil) {
+      states.add(runner.health().state);
+      await sleep(200);
+    }
+    expect([...states]).toEqual(['active']);
+    expect(
+      pinnedClientId(
+        await client.manager.consumers.info('FUEL', definition.durableName),
+      ),
+    ).toBe(pinned);
+    const sentAt = await publishReading(mmsi, 2);
+    await waitFor(() => deliveries.length === 2, { timeoutMs: 5000 });
+    expect((deliveries[1]?.at ?? Infinity) - sentAt).toBeLessThan(1000);
+  }, 40_000);
+
+  it('re-pulls at once when unpinned: the standby takes over and a stale standby never unpins it (NATS-5, NATS-6)', async () => {
+    const mmsi = base + 5;
+    const definition = fuelConsumer('unpinned', mmsi);
+    const deliveries: Delivery[] = [];
+    const exclusive = { pinnedTtlMs: 30_000 };
+    const a = await startRunner(definition, deliveries, {
+      label: 'a',
+      exclusive,
+    });
+    await publishReading(mmsi, 1);
+    await waitFor(() => deliveries.length === 1);
+    expect(a.state).toBe('active');
+    const b = await startRunner(definition, deliveries, {
+      label: 'b',
+      exclusive,
+    });
+    await sleep(300);
+    // Late-started and never pinned.
+    expect(b.state).toBe('starting');
+
+    await client.manager.consumers.unpin(
+      'FUEL',
+      definition.durableName,
+      'active',
+    );
+    const sentAt = await publishReading(mmsi, 2);
+    await waitFor(() => deliveries.length === 2, { timeoutMs: 5000 });
+    expect(deliveries[1]?.runner).toBe('b');
+    expect((deliveries[1]?.at ?? Infinity) - sentAt).toBeLessThan(1000);
+    expect(b.state).toBe('active');
+    await waitFor(() => a.state === 'standby', { timeoutMs: 15_000 });
+    // a re-subscribed (after about 2 s) as a standby: b keeps the messages.
+    await sleep(2500);
+    await publishReading(mmsi, 3);
+    await waitFor(() => deliveries.length === 3);
+    expect(deliveries[2]?.runner).toBe('b');
+    expect(a.health()).toMatchObject({
+      state: 'standby',
+      standby: true,
+      healthy: true,
+    });
+
+    // Stopping the stale standby leaves b pinned.
+    const pinned = pinnedClientId(
+      await client.manager.consumers.info('FUEL', definition.durableName),
+    );
+    await a.stop(2000);
+    expect(
+      pinnedClientId(
+        await client.manager.consumers.info('FUEL', definition.durableName),
+      ),
+    ).toBe(pinned);
+    const lastAt = await publishReading(mmsi, 4);
+    await waitFor(() => deliveries.length === 4);
+    expect(deliveries[3]?.runner).toBe('b');
+    expect((deliveries[3]?.at ?? Infinity) - lastAt).toBeLessThan(1000);
+  }, 60_000);
+
+  it('releases the pin on a graceful stop: the standby handles the next message at once (NATS-6)', async () => {
+    const mmsi = base + 6;
+    const definition = fuelConsumer('handover', mmsi);
+    const deliveries: Delivery[] = [];
+    // Without the release, b would wait for the full 30 s TTL.
+    const exclusive = { pinnedTtlMs: 30_000 };
+    const a = await startRunner(definition, deliveries, {
+      label: 'a',
+      exclusive,
+    });
+    await publishReading(mmsi, 1);
+    await waitFor(() => deliveries.length === 1);
+    await startRunner(definition, deliveries, { label: 'b', exclusive });
+    await sleep(300);
+    await a.stop(2000);
+    const sentAt = await publishReading(mmsi, 2);
+    await waitFor(() => deliveries.length === 2, { timeoutMs: 5000 });
+    expect(deliveries[1]?.runner).toBe('b');
+    expect((deliveries[1]?.at ?? Infinity) - sentAt).toBeLessThan(1000);
+  }, 30_000);
+
+  it('gates the new active instance on onActivated, retrying a failed hook without losing the message (NATS-7)', async () => {
+    const mmsi = base + 7;
+    const definition = fuelConsumer('activation', mmsi);
+    const deliveries: Delivery[] = [];
+    const log: string[] = [];
+    const exclusive = { pinnedTtlMs: 30_000 };
+    const a = await startRunner(definition, deliveries, {
+      label: 'a',
+      exclusive,
+      log,
+      hooks: {
+        onDeactivated: (event) => {
+          log.push(`a:deactivated:${event.reason}`);
+        },
+      },
+    });
+    await publishReading(mmsi, 1);
+    await waitFor(() => deliveries.length === 1);
+    let attempts = 0;
+    await startRunner(definition, deliveries, {
+      label: 'b',
+      exclusive,
+      log,
+      backoffMs: [300],
+      hooks: {
+        onActivated: async (event) => {
+          attempts += 1;
+          log.push(`b:activating:${attempts}:${event.reason}`);
+          await sleep(700); // a slow reload delays dispatch
+          if (attempts === 1) throw new Error('state store unavailable');
+          log.push('b:activated');
+        },
+      },
+    });
+    await sleep(300);
+    await a.stop(2000);
+    const sentAt = await publishReading(mmsi, 2);
+    await waitFor(() => deliveries.length === 2, { timeoutMs: 20_000 });
+    expect(log).toEqual([
+      'a:handled:1',
+      'a:deactivated:stopped',
+      'b:activating:1:pinned',
+      'b:activating:2:pinned',
+      'b:activated',
+      'b:handled:2',
+    ]);
+    // The message waited for two slow hooks and was redelivered once.
+    expect(deliveries[1]).toMatchObject({ runner: 'b', deliveryCount: 2 });
+    expect((deliveries[1]?.at ?? 0) - sentAt).toBeGreaterThan(1400);
+    expect(await app.get(MetricsService).render()).toMatch(
+      new RegExp(
+        `aisits_events_consumer_activations_total\\{consumer="${definition.durableName}"\\} 2`,
+      ),
+    );
+  }, 40_000);
+});
+
+describe('exclusive @EventHandler providers (ExclusiveConsumerListener)', () => {
+  it('calls the listener hooks on the provider and reports the consumer state', async () => {
+    @Module({
+      imports: [NatsModule.forRoot({ streams: ['FUEL'] })],
+      providers: [ExclusiveProcessor],
+    })
+    class ListenerModule {}
+    const app = await buildTestApp(ListenerModule, {
+      config: createTestConfig(baseConfigSchema, {
+        SERVICE_NAME: 'nats-listener-test',
+        NATS_URL: testInfra().natsUrl,
+      }),
+    });
+    const processor = app.get(ExclusiveProcessor);
+    try {
+      const consumers = app.get(EventConsumers);
+      expect(consumers.state(listenerConsumer.durableName)).toBe('starting');
+      expect(consumers.state('no-such-consumer')).toBeUndefined();
+      await app
+        .get(EventPublisher)
+        .publishEvent(
+          EVENT_TYPES.FUEL_READING_RECORDED,
+          reading(LISTENER_MMSI, 1),
+        );
+      await waitFor(() => processor.log.includes('handled:1'));
+      expect(processor.log).toEqual(['activated', 'handled:1']);
+      expect(consumers.state(listenerConsumer.durableName)).toBe('active');
+      expect(processor.events[0]).toMatchObject({
+        stream: 'FUEL',
+        reason: 'pinned',
+        previous: undefined,
+      });
+      expect(processor.events[0]?.consumer).toContain(
+        listenerConsumer.durableName,
+      );
+    } finally {
+      await app.close();
+    }
+    // A graceful stop deactivates (then releases the pin).
+    expect(processor.log.at(-1)).toBe('deactivated:stopped');
+    expect(processor.events.at(-1)?.pinId).toBe(processor.events[0]?.pinId);
+  }, 30_000);
 });
 
 describe('stream ownership (spec §7.2)', () => {

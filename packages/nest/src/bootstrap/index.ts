@@ -2,6 +2,7 @@ export {
   bootstrapService,
   type BootstrapServiceOptions,
   SHUTDOWN_SIGNALS,
+  trustedProxiesWarning,
 } from './bootstrap-service.js';
 export {
   type CreatePlatformAppOptions,

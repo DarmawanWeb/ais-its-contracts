@@ -1,5 +1,6 @@
 import {
   type AlertRaisedV1,
+  AlertResolvedV1Schema,
   type DurableConsumerDefinition,
   EVENT_TYPES,
   parseEnvelope,
@@ -11,8 +12,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 
 import {
+  AlertEmitter,
   type AlertPersistence,
   type AlertResolution,
+  type AlertUpdate,
   type Detector,
   type DetectorContext,
   type DetectorZoneChange,
@@ -20,6 +23,7 @@ import {
   DetectorRunnerModule,
   makeTestVesselSnapshot,
   makeTestZone,
+  type OpenAlert,
   RegisterDetector,
   toPositionPayload,
   type VesselPosition,
@@ -27,6 +31,7 @@ import {
 } from '../src/analytics/index.js';
 import { baseConfigSchema } from '../src/config/index.js';
 import { EventPublisher, NatsClient, NatsModule } from '../src/nats/index.js';
+import { RedisModule } from '../src/redis/index.js';
 import {
   buildTestApp,
   createTestConfig,
@@ -126,8 +131,13 @@ const square = (lon: number, lat: number, size: number) => ({
   ],
 });
 
-const position = (lat: number, lon: number, time: Date): VesselPosition => ({
-  mmsi: MMSI,
+const position = (
+  lat: number,
+  lon: number,
+  time: Date,
+  mmsi: number = MMSI,
+): VesselPosition => ({
+  mmsi,
   time,
   source: 'primary',
   lat,
@@ -149,6 +159,7 @@ describe('DetectorRunnerModule (end to end over NATS)', () => {
     });
   let producer: NestFastifyApplication;
   let app: NestFastifyApplication;
+  let raisedSeq = 0;
   const persistence = new RecordingPersistence();
   const naval = makeTestZone({
     kind: 'restricted',
@@ -178,6 +189,8 @@ describe('DetectorRunnerModule (end to end over NATS)', () => {
         DetectorRunnerModule.forRoot({
           positions,
           concurrency: 2,
+          // Resolutions are announced at once (no reopen window).
+          alertCooldownMs: 0,
           persistence: { useValue: persistence },
           env: {
             DETECTORS: 'restricted_area',
@@ -249,6 +262,7 @@ describe('DetectorRunnerModule (end to end over NATS)', () => {
     expect(persistence.raised.map((alert) => alert.id)).toEqual([
       parsed.envelope.data.id,
     ]);
+    raisedSeq = stored.seq;
   });
 
   it('does not repeat an unchanged occurrence and resolves it when the vessel leaves', async () => {
@@ -267,6 +281,42 @@ describe('DetectorRunnerModule (end to end over NATS)', () => {
     });
     expect(persistence.resolved[0]?.reason).toBe('left');
     expect(persistence.raised).toHaveLength(1);
+
+    // alert.resolved.v1 follows the raise on its subject in ALERTS.
+    const client = app.get(NatsClient);
+    const stored = await waitFor(
+      async () => {
+        const last = await client.manager.streams
+          .getMessage('ALERTS', {
+            last_by_subj: subjects.alert('geofence', MMSI),
+          })
+          .catch(() => undefined);
+        return (last?.seq ?? 0) > raisedSeq ? last : undefined;
+      },
+      { timeoutMs: 15_000 },
+    );
+    const parsed = parseEnvelope(stored.data);
+    if (!parsed.success || parsed.envelope.type !== EVENT_TYPES.ALERT_RESOLVED)
+      throw new Error('expected a resolution');
+    expect(AlertResolvedV1Schema.parse(parsed.envelope.data)).toMatchObject({
+      id: persistence.resolved[0]?.eventId,
+      alertId: persistence.raised[0]?.id,
+      type: 'geofence',
+      domain: 'surveillance',
+      severity: 'critical',
+      mmsi: MMSI,
+      zoneId: naval.id,
+      dedupKey: `geofence:${MMSI}:${naval.id}`,
+      reason: 'left',
+      methodId: 'geo.geofence_enter',
+    });
+    expect(parsed.envelope.id).toBe(parsed.envelope.data.id);
+    const info = await client.manager.streams.info('ALERTS', {
+      subjects_filter: subjects.alert('geofence', MMSI),
+    });
+    expect(info.state.subjects).toEqual({
+      [subjects.alert('geofence', MMSI)]: 2,
+    });
   });
 
   it('applies live zone changes to the index and the detectors', async () => {
@@ -290,6 +340,259 @@ describe('DetectorRunnerModule (end to end over NATS)', () => {
     );
     expect(metrics).toContain(
       'aisits_detector_alerts_total{detector="restricted_area",severity="critical"} 1',
+    );
+    expect(metrics).toContain(
+      'aisits_detector_alert_resolutions_total{detector="restricted_area"} 1',
+    );
+  });
+});
+
+/** The `events` table of the failover test, shared by both instances. */
+class SharedAlertStore implements AlertPersistence {
+  readonly open = new Map<string, OpenAlert>();
+  readonly raised: AlertRaisedV1[] = [];
+  readonly resolved: AlertResolution[] = [];
+
+  onRaised(alert: AlertRaisedV1): Promise<void> {
+    this.raised.push(alert);
+    const now = new Date();
+    this.open.set(alert.dedupKey, {
+      alertId: alert.id,
+      dedupKey: alert.dedupKey,
+      type: alert.type,
+      mmsi: alert.mmsi,
+      relatedMmsi: alert.relatedMmsi,
+      zoneId: alert.zoneId,
+      severity: alert.severity,
+      publishedSeverity: alert.severity,
+      openedAt: now,
+      publishedAt: now,
+      lastSeenAt: now,
+      firstOccurredAt: new Date(alert.occurredAt),
+      lastOccurredAt: new Date(alert.occurredAt),
+      domain: alert.domain,
+      methodId: alert.methodId,
+      detector: 'failover_probe',
+    });
+    return Promise.resolve();
+  }
+
+  onUpdated(update: AlertUpdate): Promise<void> {
+    this.open.set(update.alert.dedupKey, update.alert);
+    return Promise.resolve();
+  }
+
+  onResolved(resolution: AlertResolution): Promise<void> {
+    this.resolved.push(resolution);
+    if (
+      this.open.get(resolution.alert.dedupKey)?.alertId ===
+      resolution.alert.alertId
+    )
+      this.open.delete(resolution.alert.dedupKey);
+    return Promise.resolve();
+  }
+
+  loadOpen(): Promise<readonly OpenAlert[]> {
+    return Promise.resolve([...this.open.values()]);
+  }
+}
+
+/** Alerts while a vessel is inside a restricted zone; records its calls and ticks. */
+@RegisterDetector()
+@Injectable()
+class FailoverProbe implements Detector {
+  readonly id = 'failover_probe';
+  readonly domain = 'surveillance' as const;
+  readonly methodIds = ['geo.geofence_enter'];
+  readonly tickIntervalMs = 100;
+  readonly calls: string[] = [];
+  /** Time of each vessel's state when the instance was activated. */
+  readonly statesAtActivation = new Map<number, number | undefined>();
+  ticks = 0;
+
+  async onPosition(
+    context: DetectorContext,
+    position: VesselPosition,
+  ): Promise<void> {
+    const inside = context.zones.zonesAt(position, { kinds: ['restricted'] });
+    for (const zone of inside) {
+      const outcome = await context.alerts.raise({
+        type: 'geofence',
+        dedupKey: `geofence:${position.mmsi}:${zone.id}`,
+        severity: 'warning',
+        mmsi: position.mmsi,
+        title: `Entered ${zone.name}`,
+        message: `Vessel ${position.mmsi} is inside ${zone.name}`,
+        position,
+        occurredAt: position.time,
+        zoneId: zone.id,
+      });
+      this.calls.push(`position:${position.mmsi}:${outcome}`);
+    }
+    for (const open of context.alerts.open({ mmsi: position.mmsi })) {
+      if (inside.some((zone) => zone.id === open.zoneId)) continue;
+      if (
+        await context.alerts.resolve(open.dedupKey, {
+          at: position.time,
+          reason: 'left',
+        })
+      )
+        this.calls.push(`position:${position.mmsi}:resolved`);
+    }
+  }
+
+  onTick(): void {
+    this.ticks += 1;
+  }
+
+  onActivated(context: DetectorContext): void {
+    this.calls.push(`activated:open=${context.alerts.open().length}`);
+    for (const state of context.vessels.values())
+      this.statesAtActivation.set(state.mmsi, state.time.getTime());
+  }
+
+  onDeactivated(): void {
+    this.calls.push('deactivated');
+  }
+}
+
+describe('DetectorRunnerModule failover (two instances, one exclusive durable)', () => {
+  const X = MMSI + 1;
+  const Y = MMSI + 2;
+  const config = () =>
+    createTestConfig(baseConfigSchema, {
+      SERVICE_NAME: 'surveillance',
+      NATS_URL: testInfra().natsUrl,
+      REDIS_URL: testInfra().redisUrl,
+    });
+  const store = new SharedAlertStore();
+  const mirrorPrefix = `${uniqueName('vessel_state')}:`;
+  const zone = makeTestZone({
+    kind: 'restricted',
+    name: 'Failover range',
+    geometry: square(105.3, 1.3, 0.05),
+  });
+  const keyOf = (mmsi: number) => `geofence:${mmsi}:${zone.id}`;
+  const failoverPositions: DurableConsumerDefinition = {
+    durableName: uniqueName('detector_failover'),
+    stream: 'AIS_POSITION',
+    filterSubjects: [subjects.aisPosition(X), subjects.aisPosition(Y)],
+    service: 'surveillance',
+    eventTypes: [EVENT_TYPES.AIS_POSITION_RECORDED],
+    maxDeliver: 10,
+    description: 'detector runner failover test',
+  };
+  let producer: NestFastifyApplication;
+  const apps: NestFastifyApplication[] = [];
+
+  async function startInstance(): Promise<NestFastifyApplication> {
+    @Module({
+      imports: [
+        NatsModule.forRoot({ streams: ['ALERTS'] }),
+        RedisModule.forRoot(),
+        DetectorRunnerModule.forRoot({
+          positions: failoverPositions,
+          fleet: false,
+          vesselState: { mirror: { keyPrefix: mirrorPrefix } },
+          alertCooldownMs: 0,
+          persistence: { useValue: store },
+          env: { DETECTORS: 'failover_probe' },
+        }),
+      ],
+      providers: [FailoverProbe],
+    })
+    class InstanceModule {}
+    const instance = await buildTestApp(InstanceModule, { config: config() });
+    apps.push(instance);
+    return instance;
+  }
+
+  const publish = (mmsi: number, lat: number, lon: number, time: Date) =>
+    producer
+      .get(EventPublisher)
+      .publishEvent(
+        EVENT_TYPES.AIS_POSITION_RECORDED,
+        toPositionPayload(position(lat, lon, time, mmsi)),
+      );
+
+  beforeAll(async () => {
+    @Module({
+      imports: [NatsModule.forRoot({ streams: ['AIS_POSITION', 'GEO'] })],
+    })
+    class ProducerModule {}
+    producer = await buildTestApp(ProducerModule, { config: config() });
+    await producer
+      .get(EventPublisher)
+      .publishEvent(EVENT_TYPES.GEO_ZONE_UPSERTED, zone);
+  });
+
+  afterAll(async () => {
+    for (const instance of apps.splice(0).reverse()) await instance.close();
+    await producer.close();
+  });
+
+  it('reloads the open alerts on takeover: no second raise, no missed resolution, ticks only on the active instance', async () => {
+    const t0 = Date.now();
+    // A becomes the active instance with Y's alert open.
+    const a = await startInstance();
+    const probeA = a.get(FailoverProbe);
+    await publish(Y, 1.32, 105.32, new Date(t0));
+    await waitFor(() => probeA.calls.includes(`position:${Y}:raised`), {
+      timeoutMs: 15_000,
+    });
+
+    // B boots as a hot standby: it restores Y as open at boot.
+    const b = await startInstance();
+    const probeB = b.get(FailoverProbe);
+    expect(b.get(AlertEmitter).isOpen(keyOf(Y))).toBe(true);
+
+    // A resolves Y and raises X after B booted.
+    await publish(Y, 1.0, 105.0, new Date(t0 + 1_000));
+    await publish(X, 1.33, 105.33, new Date(t0 + 2_000));
+    await waitFor(
+      () =>
+        probeA.calls.includes(`position:${Y}:resolved`) &&
+        probeA.calls.includes(`position:${X}:raised`),
+      { timeoutMs: 15_000 },
+    );
+    await waitFor(() => probeA.ticks > 0);
+    expect(probeB.ticks).toBe(0);
+    expect(probeB.calls).toEqual([]);
+
+    // A stops: its pin is released and B takes over with the next position.
+    await a.close();
+    apps.splice(apps.indexOf(a), 1);
+    expect(probeA.calls.at(-1)).toBe('deactivated');
+    await publish(X, 1.34, 105.34, new Date(t0 + 3_000));
+    await waitFor(() => probeB.calls.includes(`position:${X}:unchanged`), {
+      timeoutMs: 20_000,
+    });
+
+    // Activation ran once, before B's first position, with the store's state
+    // and the vessel states A mirrored to Valkey after B booted.
+    expect(probeB.calls).toEqual([
+      'activated:open=1',
+      `position:${X}:unchanged`,
+    ]);
+    expect(probeB.statesAtActivation.get(X)).toBe(t0 + 2_000);
+    expect(probeB.statesAtActivation.get(Y)).toBe(t0 + 1_000);
+    const emitterB = b.get(AlertEmitter);
+    expect(emitterB.isOpen(keyOf(X))).toBe(true);
+    expect(emitterB.isOpen(keyOf(Y))).toBe(false);
+    expect(store.raised.map((alert) => alert.mmsi)).toEqual([Y, X]);
+    await waitFor(() => probeB.ticks > 0);
+
+    // ALERTS: X raised once; Y raised then resolved.
+    const info = await b.get(NatsClient).manager.streams.info('ALERTS', {
+      subjects_filter: `alert.v1.geofence.>`,
+    });
+    expect(info.state.subjects).toMatchObject({
+      [subjects.alert('geofence', X)]: 1,
+      [subjects.alert('geofence', Y)]: 2,
+    });
+    const metrics = (await b.inject({ method: 'GET', url: '/metrics' })).body;
+    expect(metrics).toContain(
+      'aisits_detector_activations_total{outcome="completed"} 1',
     );
   });
 });

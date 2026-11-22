@@ -9,15 +9,25 @@ import {
   Module,
   type OnApplicationShutdown,
   type OnModuleInit,
+  Post,
 } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiCookieAuth,
+  ApiOkResponse,
+  ApiSecurity,
+  ApiTags,
+} from '@nestjs/swagger';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as z from 'zod';
 
 import { DetectorRunnerModule } from '../src/analytics/index.js';
 import { AuthModule, Public, RequirePermissions } from '../src/auth/index.js';
 import { DatabaseModule } from '../src/db/index.js';
+import {
+  OpenApiSecurityError,
+  REFRESH_COOKIE_SECURITY_SCHEME,
+} from '../src/http/index.js';
 import {
   baseConfigSchema,
   bootstrapService,
@@ -226,5 +236,67 @@ describe('exportOpenApi', () => {
       exportOpenApi({ ...options, env: { S3_ENDPOINT: 'not a url' } }),
     ).rejects.toBeInstanceOf(ConfigValidationError);
     expect(hooks).toEqual([]);
+  });
+
+  it('declares extra security schemes and refuses undeclared ones (CORE-7)', async () => {
+    @ApiTags('auth')
+    @Controller('auth')
+    class RefreshController {
+      @Public()
+      @ApiCookieAuth('refreshCookie')
+      @Post('refresh')
+      refresh(): void {
+        // documented only
+      }
+    }
+    @Controller('broken')
+    class BrokenController {
+      @ApiSecurity('nowhere')
+      @Get()
+      broken(): void {
+        // documented only
+      }
+    }
+    const config = loadConfig(baseConfigSchema, {
+      env: { SERVICE_NAME: 'auth', NODE_ENV: 'test' },
+      output: null,
+    });
+    @Module({ controllers: [RefreshController] })
+    class AuthAppModule {}
+    const outFile = join(dir, 'auth.json');
+    const options = {
+      appModule: AuthAppModule,
+      config,
+      openapi: {
+        title: 'Auth',
+        version: '0.1.0',
+        securitySchemes: { refreshCookie: REFRESH_COOKIE_SECURITY_SCHEME },
+      },
+      outFile,
+    };
+    const document = await exportOpenApi(options);
+    expect(document.components?.securitySchemes?.refreshCookie).toEqual({
+      type: 'apiKey',
+      in: 'cookie',
+      name: 'aisits_rt',
+      description: expect.stringContaining('aisits_rt') as string,
+    });
+    expect(
+      document.paths['/api/v2/auth/refresh']?.post?.security,
+    ).toContainEqual({ refreshCookie: [] });
+    await expect(
+      exportOpenApi({ ...options, check: true }),
+    ).resolves.toBeDefined();
+
+    @Module({ controllers: [BrokenController] })
+    class BrokenAppModule {}
+    await expect(
+      exportOpenApi({
+        appModule: BrokenAppModule,
+        config,
+        openapi: { title: 'Broken', version: '0.1.0' },
+        outFile: join(dir, 'broken.json'),
+      }),
+    ).rejects.toBeInstanceOf(OpenApiSecurityError);
   });
 });

@@ -3,6 +3,8 @@ import * as z from 'zod';
 import {
   CONSUMER_LIST,
   CORE_SUBSCRIPTIONS,
+  type CoreSubscriptionDefinition,
+  coreSubscriptionDelivery,
   ENVELOPE_SHAPE,
   EVENT_DEFINITIONS,
   EVENT_SCHEMAS,
@@ -16,6 +18,8 @@ import {
   STREAMS,
 } from '../../src/events/index.js';
 import { EVENT_EXAMPLES } from '../../src/events/__fixtures__/examples.js';
+import { REALTIME_ALERT_FANOUT_EXAMPLE } from '../../src/realtime/__fixtures__/fanout.js';
+import { CORE_SUBSCRIPTION_PAYLOADS } from '../../src/realtime/index.js';
 import { asJsonObject, asStringArray, type JsonObject } from './json.js';
 import { toJsonSchema } from './json-schemas.js';
 
@@ -34,9 +38,107 @@ const CHANNEL_IDS: Readonly<Record<StreamName, string>> = {
   DLQ: 'deadLetter',
 };
 
-const TELEMETRY_CHANNEL = 'telemetryMqtt';
 const DEAD_LETTER_MESSAGE = 'DeadLetter';
-const DEVICE_TELEMETRY_MESSAGE = 'DeviceTelemetry';
+
+/** AsyncAPI presentation of a core NATS subscription: its channel and message. */
+interface CoreChannel {
+  /** Channel id. */
+  readonly id: string;
+  /** Address of the subject, with a `{parameter}` for every wildcard token. */
+  readonly address: string;
+  readonly title: string;
+  readonly description: string;
+  readonly parameters: Readonly<
+    Record<string, { readonly description: string }>
+  >;
+  readonly message: {
+    /** Component id of the message (and of its payload schema). */
+    readonly id: string;
+    readonly name: string;
+    readonly title: string;
+    readonly summary: string;
+    /**
+     * Inline payload schema; by default the JSON Schema of
+     * `CORE_SUBSCRIPTION_PAYLOADS[name]` under `components.schemas[id]`.
+     */
+    readonly payload?: JsonObject;
+    readonly example?: unknown;
+  };
+}
+
+/** Channel of every core subscription of `CORE_SUBSCRIPTIONS`, by name. */
+const CORE_CHANNELS: Readonly<Record<string, CoreChannel>> = {
+  'telemetry-mqtt': {
+    id: 'telemetryMqtt',
+    address: 'aisits.telemetry.{deviceId}',
+    title: 'Device telemetry (core NATS)',
+    description:
+      'Core NATS subject of MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.',
+    parameters: { deviceId: { description: 'Registered device id.' } },
+    message: {
+      id: 'DeviceTelemetry',
+      name: 'device-telemetry',
+      title: 'Device telemetry',
+      summary: 'Raw JSON published by a registered fuel meter.',
+      payload: {
+        type: 'object',
+        description:
+          'Device specific JSON; validated and normalized by the telemetry service.',
+      },
+    },
+  },
+  'notification-realtime-fanout': {
+    id: 'notificationRealtime',
+    address: 'aisits.notification.realtime.v1',
+    title: 'Alert push fan-out (core NATS)',
+    description:
+      'Core NATS subject on which the notification instance that changed an alert publishes its alert:raised / alert:updated push; every instance (no queue group) emits it to the rooms of its own socket clients. Not persisted in JetStream; a push is best effort, the inbox stays the source of truth.',
+    parameters: {},
+    message: {
+      id: 'RealtimeAlertFanout',
+      name: 'realtime-alert-fanout',
+      title: 'Realtime alert fan-out',
+      summary:
+        'An alert:raised / alert:updated push for the given rooms (notification → every notification instance).',
+      example: REALTIME_ALERT_FANOUT_EXAMPLE,
+    },
+  },
+};
+
+/**
+ * Channel of a core subscription.
+ *
+ * @throws {Error} when the subscription has no channel or its address does
+ * not describe its subject.
+ */
+function coreChannelOf(subscription: CoreSubscriptionDefinition): CoreChannel {
+  const channel = CORE_CHANNELS[subscription.name];
+  if (channel === undefined) {
+    throw new Error(
+      `Core subscription "${subscription.name}" has no AsyncAPI channel (CORE_CHANNELS)`,
+    );
+  }
+  const pattern = channel.address.replace(/\{\w+\}/g, '*');
+  if (pattern !== subscription.subject) {
+    throw new Error(
+      `Channel address ${channel.address} of "${subscription.name}" does not describe its subject ${subscription.subject}`,
+    );
+  }
+  return channel;
+}
+
+/** Payload schema of a core subscription in `CORE_SUBSCRIPTION_PAYLOADS`. */
+function corePayloadSchema(name: string): z.ZodType {
+  const payloads: Readonly<Record<string, z.ZodType>> =
+    CORE_SUBSCRIPTION_PAYLOADS;
+  const schema = payloads[name];
+  if (schema === undefined) {
+    throw new Error(
+      `Core subscription "${name}" has no payload schema (CORE_SUBSCRIPTION_PAYLOADS)`,
+    );
+  }
+  return schema;
+}
 
 /** Prefix of the AsyncAPI specification extensions of this document. */
 const EXTENSION = 'x-ais-its';
@@ -224,17 +326,19 @@ function operations(): JsonObject {
     },
   ]);
   for (const subscription of CORE_SUBSCRIPTIONS) {
+    const channel = coreChannelOf(subscription);
     entries.push([
       `receive-${subscription.name}`,
       {
         action: 'receive',
-        channel: ref(`#/channels/${TELEMETRY_CHANNEL}`),
+        channel: ref(`#/channels/${channel.id}`),
         summary: `${subscription.service}: ${subscription.description}`,
-        messages: [messageRef(TELEMETRY_CHANNEL, DEVICE_TELEMETRY_MESSAGE)],
+        messages: [messageRef(channel.id, channel.message.id)],
         [`${EXTENSION}-consumer`]: {
           kind: 'core',
           service: subscription.service,
           subject: subscription.subject,
+          delivery: coreSubscriptionDelivery(subscription),
         },
       },
     ]);
@@ -283,18 +387,20 @@ export function buildAsyncApiDocument(options: AsyncApiOptions): JsonObject {
       subjects: [...STREAMS.DLQ.subjects],
     },
   };
-  channels[TELEMETRY_CHANNEL] = {
-    address: 'aisits.telemetry.{deviceId}',
-    title: 'Device telemetry (core NATS)',
-    description:
-      'Core NATS subject of MQTT topic aisits/telemetry/<deviceId> (NATS MQTT gateway); not persisted in JetStream.',
-    parameters: { deviceId: { description: 'Registered device id.' } },
-    messages: {
-      [DEVICE_TELEMETRY_MESSAGE]: ref(
-        `#/components/messages/${DEVICE_TELEMETRY_MESSAGE}`,
-      ),
-    },
-  };
+  for (const subscription of CORE_SUBSCRIPTIONS) {
+    const channel = coreChannelOf(subscription);
+    channels[channel.id] = {
+      address: channel.address,
+      title: channel.title,
+      description: channel.description,
+      parameters: channel.parameters,
+      messages: {
+        [channel.message.id]: ref(
+          `#/components/messages/${channel.message.id}`,
+        ),
+      },
+    };
+  }
 
   const schemas: JsonObject = {
     EventEnvelope: {
@@ -332,17 +438,27 @@ export function buildAsyncApiDocument(options: AsyncApiOptions): JsonObject {
     contentType: 'application/json',
     payload: ref('#/components/schemas/EventEnvelope'),
   };
-  messages[DEVICE_TELEMETRY_MESSAGE] = {
-    name: 'device-telemetry',
-    title: 'Device telemetry',
-    summary: 'Raw JSON published by a registered fuel meter.',
-    contentType: 'application/json',
-    payload: {
-      type: 'object',
-      description:
-        'Device specific JSON; validated and normalized by the telemetry service.',
-    },
-  };
+  for (const subscription of CORE_SUBSCRIPTIONS) {
+    const { message } = coreChannelOf(subscription);
+    const schema = corePayloadSchema(subscription.name);
+    if (message.payload === undefined) {
+      schemas[message.id] = toJsonSchema(schema, 'draft-7');
+    }
+    if (message.example !== undefined) {
+      // Fails the generator when the documented example drifts from the schema.
+      schema.parse(message.example);
+    }
+    messages[message.id] = {
+      name: message.name,
+      title: message.title,
+      summary: message.summary,
+      contentType: 'application/json',
+      payload: message.payload ?? ref(`#/components/schemas/${message.id}`),
+      ...(message.example === undefined
+        ? {}
+        : { examples: [{ name: 'example', payload: message.example }] }),
+    };
+  }
 
   return {
     asyncapi: '3.0.0',

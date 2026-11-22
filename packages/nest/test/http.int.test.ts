@@ -7,6 +7,7 @@ import { AuthModule } from '../src/auth/index.js';
 import { baseConfigSchema } from '../src/config/index.js';
 import {
   buildTestApp,
+  type BuildTestAppOptions,
   createTestConfig,
   createTestJwtIssuer,
   type TestJwtIssuer,
@@ -16,6 +17,7 @@ import { FixtureModule } from './support/fixture-app.js';
 async function fixtureApp(
   jwt: TestJwtIssuer,
   env: Record<string, string> = {},
+  options: Pick<BuildTestAppOptions, 'cors'> = {},
 ): Promise<NestFastifyApplication> {
   @Module({
     imports: [
@@ -29,6 +31,7 @@ async function fixtureApp(
   class AppModule {}
   return buildTestApp(AppModule, {
     config: createTestConfig(baseConfigSchema, env),
+    ...options,
   });
 }
 
@@ -39,7 +42,11 @@ describe('HTTP conventions', () => {
 
   beforeAll(async () => {
     jwt = await createTestJwtIssuer();
-    app = await fixtureApp(jwt, { CORS_ORIGINS: 'http://localhost:5173' });
+    app = await fixtureApp(
+      jwt,
+      { CORS_ORIGINS: 'http://localhost:5173' },
+      { cors: { exposedHeaders: ['X-Total-Count'] } },
+    );
     writer = await jwt.sign({ roles: ['fleet_manager'] });
   });
 
@@ -254,6 +261,160 @@ describe('HTTP conventions', () => {
     );
   });
 
+  it('exposes the default and the configured headers to CORS origins (CORE-6)', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v2/fixtures/public',
+      headers: { origin: 'http://localhost:5173' },
+    });
+    expect(
+      response.headers['access-control-expose-headers']
+        ?.toString()
+        .split(',')
+        .map((header) => header.trim()),
+    ).toEqual([
+      'X-Request-Id',
+      'Retry-After',
+      'WWW-Authenticate',
+      'ETag',
+      'Location',
+      'X-Total-Count',
+    ]);
+  });
+
+  it('bounds page at MAX_PAGE: 400 instead of an OFFSET overflow (CORE-3)', async () => {
+    const last = await app.inject({
+      method: 'GET',
+      url: '/api/v2/fixtures/pages?page=1000000&pageSize=100',
+    });
+    expect(last.json()).toEqual({ offset: 99_999_900 });
+    for (const page of ['1000001', '99999999999999999999']) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v2/fixtures/pages?page=${page}`,
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        errors: [expect.objectContaining({ field: 'page', code: 'max' })],
+      });
+    }
+  });
+
+  it('validates path parameters with field errors (CORE-4)', async () => {
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v2/fixtures/by-mmsi/525005223',
+        })
+      ).json(),
+    ).toEqual({ mmsi: 525005223 });
+    for (const value of ['0525005223', '0x1F4A1D67', '%20525005223', '1e5']) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v2/fixtures/by-mmsi/${value}`,
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({
+        code: 'VALIDATION_FAILED',
+        errors: [{ field: 'mmsi', code: 'isMmsi' }],
+      });
+    }
+    const id = '0193a3c0-0000-7000-8000-0000000000e1';
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/v2/fixtures/zones/${id}/years/2026`,
+        })
+      ).json(),
+    ).toEqual({ id, year: 2026 });
+    const badId = await app.inject({
+      method: 'GET',
+      url: '/api/v2/fixtures/zones/not-a-uuid/years/2026',
+    });
+    expect(badId.json()).toMatchObject({
+      status: 400,
+      code: 'VALIDATION_FAILED',
+      errors: [{ field: 'id', code: 'isUuid' }],
+    });
+    const badYear = await app.inject({
+      method: 'GET',
+      url: `/api/v2/fixtures/zones/${id}/years/1999`,
+    });
+    expect(badYear.json()).toMatchObject({
+      code: 'VALIDATION_FAILED',
+      errors: [{ field: 'year', code: 'min' }],
+    });
+  });
+
+  it('answers 400 for null in an "optional but not null" PATCH field (CORE-5)', async () => {
+    const url = '/api/v2/fixtures/zones/0193a3c0-0000-7000-8000-0000000000e1';
+    const patch = (payload: Record<string, unknown>) =>
+      app.inject({ method: 'PATCH', url, payload });
+    expect((await patch({})).json()).toMatchObject({ fields: [] });
+    expect((await patch({ name: 'Batam' })).json()).toMatchObject({
+      fields: ['name'],
+    });
+    const cleared = await patch({ name: null });
+    expect(cleared.statusCode).toBe(400);
+    const clearedBody = cleared.json<{
+      code: string;
+      errors: { field: string; code: string }[];
+    }>();
+    expect(clearedBody.code).toBe('VALIDATION_FAILED');
+    expect(
+      clearedBody.errors.map((error) => `${error.field}:${error.code}`),
+    ).toContain('name:isString');
+  });
+
+  it('accepts bodiless JSON POSTs and still rejects bad JSON (CORE-8)', async () => {
+    const ack = await app.inject({
+      method: 'POST',
+      url: '/api/v2/fixtures/alerts/0193a3c0-0000-7000-8000-0000000000e1/ack',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(ack.statusCode).toBe(204);
+    const empty = await app.inject({
+      method: 'POST',
+      url: '/api/v2/fixtures/vessels',
+      headers: {
+        authorization: `Bearer ${writer}`,
+        'content-type': 'application/json',
+      },
+    });
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json()).toMatchObject({ code: 'VALIDATION_FAILED' });
+    for (const payload of [
+      '{"mmsi":',
+      '{"__proto__":{"admin":true}}',
+      '{"constructor":{"prototype":{"admin":true}}}',
+    ]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v2/fixtures/vessels',
+        headers: {
+          authorization: `Bearer ${writer}`,
+          'content-type': 'application/json',
+        },
+        payload,
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: 'BAD_REQUEST' });
+    }
+    const tooLarge = await app.inject({
+      method: 'POST',
+      url: '/api/v2/fixtures/vessels',
+      headers: {
+        authorization: `Bearer ${writer}`,
+        'content-type': 'application/json',
+      },
+      payload: JSON.stringify({ name: 'x'.repeat(1024 * 1024 + 1) }),
+    });
+    expect(tooLarge.statusCode).toBe(413);
+  });
+
   it('serves Swagger UI and the OpenAPI document outside the prefix', async () => {
     const docs = await app.inject({ method: 'GET', url: '/docs' });
     expect(docs.statusCode).toBe(200);
@@ -298,6 +459,35 @@ describe('HTTP conventions', () => {
       document.paths['/api/v2/fixtures/vessels']?.post?.responses.default,
     ).toBeDefined();
     expect(document.components.schemas.ProblemDetails).toBeDefined();
+    const parameters = (path: string, method = 'get') =>
+      (
+        document.paths[path]?.[method] as
+          { parameters?: Record<string, unknown>[] } | undefined
+      )?.parameters;
+    expect(parameters('/api/v2/fixtures/by-mmsi/{mmsi}')).toEqual([
+      expect.objectContaining({
+        name: 'mmsi',
+        in: 'path',
+        required: true,
+        schema: { type: 'string', pattern: '^[0-9]{9}$', example: '525005223' },
+      }),
+    ]);
+    expect(parameters('/api/v2/fixtures/zones/{id}/years/{year}')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'id',
+          schema: { type: 'string', format: 'uuid' },
+        }),
+        expect.objectContaining({
+          name: 'year',
+          schema: { type: 'integer', minimum: 2000, maximum: 2100 },
+        }),
+      ]),
+    );
+    const page = parameters('/api/v2/fixtures/pages')?.find(
+      (parameter) => parameter.name === 'page',
+    );
+    expect(page?.schema).toMatchObject({ maximum: 1_000_000 });
   });
 });
 

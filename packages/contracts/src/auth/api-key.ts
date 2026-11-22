@@ -117,6 +117,51 @@ export function isApiKey(value: unknown): boolean {
 }
 
 /**
+ * Digest algorithm of the stored API key hash (`api_keys.key_hash`), as
+ * named by WebCrypto (`crypto.subtle.digest`).
+ */
+export const API_KEY_HASH_ALGORITHM = 'SHA-256';
+
+const HEX_DIGITS = '0123456789abcdef';
+
+/** Lowercase hex of bytes. */
+function toHex(bytes: Uint8Array): string {
+  let hex = '';
+  for (const byte of bytes) {
+    hex += (HEX_DIGITS[byte >> 4] ?? '') + (HEX_DIGITS[byte & 0x0f] ?? '');
+  }
+  return hex;
+}
+
+/**
+ * The stored hash of an API key, and the definition of `api_keys.key_hash`
+ * (spec 8.1): the SHA-256 ({@link API_KEY_HASH_ALGORITHM}) digest of the
+ * UTF-8 bytes of the full key `sk_<id>_<secret>`, as 64 lowercase hex
+ * characters. Every producer (the auth service) and verifier (the kit's API
+ * key verifier, caches keyed by hash) uses this one definition. Isomorphic:
+ * WebCrypto `crypto.subtle` of Node.js and browsers; the value equals Node's
+ * `createHash('sha256').update(key, 'utf8').digest('hex')`. Compare stored
+ * hashes in constant time.
+ *
+ * @returns a promise of the hex digest.
+ * @throws {TypeError} (as a rejection) when `key` is not a well-formed API key;
+ * the message never contains the value.
+ *
+ * @example
+ * const keyHash = await hashApiKey(presentedKey); // "b9d4a32b…"
+ */
+export async function hashApiKey(key: string): Promise<string> {
+  if (!isApiKey(key)) {
+    throw new TypeError('Not a well-formed API key (sk_<id>_<secret>)');
+  }
+  const digest = await globalThis.crypto.subtle.digest(
+    API_KEY_HASH_ALGORITHM,
+    new TextEncoder().encode(key),
+  );
+  return toHex(new Uint8Array(digest));
+}
+
+/**
  * Log-safe representation of an API key: the public prefix only
  * (`sk_<id>_…`), or `[redacted]` when the value is not a key.
  */

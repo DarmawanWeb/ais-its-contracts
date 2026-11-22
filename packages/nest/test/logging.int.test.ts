@@ -1,11 +1,16 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
 import { Module } from '@nestjs/common';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AuthModule } from '../src/auth/index.js';
 import { baseConfigSchema } from '../src/config/index.js';
+import { buildLoggerOptions, resolvePinoPretty } from '../src/logging/index.js';
 import {
   buildTestApp,
   createTestConfig,
@@ -141,5 +146,46 @@ describe('structured logging', () => {
           line.requestId === 'log-4' && line.msg === 'request completed',
       ),
     ).toBe(false);
+  });
+});
+
+describe('pretty development logging (CORE-14)', () => {
+  it('writes human-readable lines through the resolved pino-pretty', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kit-pretty-log-'));
+    const file = join(dir, 'pretty.log');
+    try {
+      const { options, prettyUnavailable } = buildLoggerOptions({
+        service: 'pretty-test',
+        level: 'info',
+        pretty: true,
+      });
+      expect(prettyUnavailable).toBe(false);
+      const transport = options.transport as {
+        target: string;
+        options: Record<string, unknown>;
+      };
+      expect(transport.target).toBe(resolvePinoPretty());
+      const logger = pino({
+        ...options,
+        transport: {
+          ...transport,
+          options: {
+            ...transport.options,
+            colorize: false,
+            destination: file,
+            mkdir: true,
+          },
+        },
+      });
+      logger.info({ vessels: 3 }, 'pretty line written');
+      const content = await waitFor(async () => {
+        const text = await readFile(file, 'utf8').catch(() => '');
+        return text.includes('pretty line written') ? text : undefined;
+      });
+      expect(content).toMatch(/INFO.*pretty line written/);
+      expect(content.trimStart().startsWith('{')).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

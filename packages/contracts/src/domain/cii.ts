@@ -48,6 +48,7 @@ export const DdVectorSchema = z
  * behaviour for non-finite ratings (`NaN` yields `E`) and for non-monotonic
  * vectors; hence the deliberately explicit condition chain.
  *
+ * @method cii.rating_grade
  * @example assignCiiGrade(0.97, { d1: 0.86, d2: 0.94, d3: 1.06, d4: 1.18 }) // "C"
  */
 export function assignCiiGrade(rating: number, d: DdVector): CiiGrade {
@@ -67,6 +68,8 @@ export function assignCiiGrade(rating: number, d: DdVector): CiiGrade {
 /**
  * Absolute grade boundaries for a required CII (`d × required`, legacy
  * `getAnnualCiiByMMMSIWithDDVector`), in the unit of the attained CII.
+ *
+ * @method cii.dd_vector_boundaries
  */
 export function ciiGradeBoundaries(required: number, d: DdVector): DdVector {
   return {

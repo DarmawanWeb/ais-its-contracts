@@ -17,6 +17,7 @@ import {
   cursorPage,
   CursorQueryDto,
   decodeQueryCursor,
+  MAX_PAGE,
   pageOffsetOf,
   PageQueryDto,
   paginate,
@@ -71,6 +72,35 @@ describe('PageQueryDto', () => {
       'pageSize',
     ]);
     await rejection(pipe.transform({ page: '1.5' }, query(PageQueryDto)));
+  });
+
+  it('bounds page at MAX_PAGE so the OFFSET never overflows (CORE-3)', async () => {
+    expect(MAX_PAGE).toBe(1_000_000);
+    const last = (await pipe.transform(
+      { page: '1000000', pageSize: '100' },
+      query(PageQueryDto),
+    )) as PageQueryDto;
+    expect(pageOffsetOf(last)).toBe(99_999_900);
+    for (const page of ['1000001', '1e20', '99999999999999999999']) {
+      const error = await rejection(
+        pipe.transform({ page }, query(PageQueryDto)),
+      );
+      expect(error.code).toBe('VALIDATION_FAILED');
+      expect(error.errors?.map((e) => e.field)).toContain('page');
+    }
+  });
+
+  it('refuses offsets that are not safe integers', () => {
+    expect(() => pageOffsetOf({ page: 2e21, pageSize: 20 })).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      pageOffsetOf({ page: Number.MAX_SAFE_INTEGER, pageSize: 100 }),
+    ).toThrow(/not a safe integer/);
+    expect(() => pageOffsetOf({ page: 0, pageSize: 20 })).toThrow(RangeError);
+    expect(() => pageOffsetOf({ page: 1, pageSize: Number.NaN })).toThrow(
+      RangeError,
+    );
   });
 });
 

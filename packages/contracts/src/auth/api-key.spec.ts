@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { createHash, webcrypto } from 'node:crypto';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  API_KEY_HASH_ALGORITHM,
   API_KEY_ID_LENGTH,
   API_KEY_PATTERN,
   API_KEY_SCOPES,
@@ -10,6 +13,7 @@ import {
   ApiKeySchema,
   BASE62_ALPHABET,
   formatApiKey,
+  hashApiKey,
   isApiKey,
   isApiKeyScope,
   maskApiKey,
@@ -127,5 +131,60 @@ describe('API key introspection forward compatibility', () => {
     expect(parseScopes(['telemetry:ingest', 'future:scope'])).toEqual([
       'telemetry:ingest',
     ]);
+  });
+});
+
+describe('API key hash (api_keys.key_hash)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is the lowercase hex SHA-256 of the full key', async () => {
+    expect(API_KEY_HASH_ALGORITHM).toBe('SHA-256');
+    await expect(hashApiKey(KEY)).resolves.toBe(
+      'b9d4a32b18ed458acbedf7be772c2c12b48db7dbb72d63d238e719d6ab095bcc',
+    );
+    const zeros = `sk_${'0'.repeat(10)}_${'0'.repeat(32)}`;
+    await expect(hashApiKey(zeros)).resolves.toBe(
+      '38b57d5dfad133532eb4c3cf7313f8991ee160514e7a96572218665fd8ac8b95',
+    );
+  });
+
+  it('equals the node:crypto hash used by the auth service and the kit', async () => {
+    for (let index = 0; index < 50; index += 1) {
+      const pick = (length: number): string =>
+        Array.from(
+          { length },
+          (_, position) =>
+            BASE62_ALPHABET[
+              (index * 31 + position * 7) % BASE62_ALPHABET.length
+            ],
+        ).join('');
+      const key = formatApiKey({ id: pick(10), secret: pick(32) });
+      const hash = await hashApiKey(key);
+      expect(hash).toBe(createHash('sha256').update(key, 'utf8').digest('hex'));
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it.each([
+    ['malformed', 'sk_short_secret'],
+    ['surrounding whitespace', ` ${KEY}`],
+    ['empty', ''],
+  ])('rejects a %s value with a TypeError that hides it', async (_, value) => {
+    const rejection = hashApiKey(value);
+    await expect(rejection).rejects.toThrow(TypeError);
+    await expect(rejection).rejects.not.toThrow(value === '' ? /^$/ : value);
+  });
+
+  it('only needs the WebCrypto global of browsers (crypto.subtle)', async () => {
+    const digest = vi.fn((algorithm: string, data: Uint8Array) =>
+      webcrypto.subtle.digest(algorithm, data),
+    );
+    vi.stubGlobal('crypto', { subtle: { digest } });
+    await expect(hashApiKey(KEY)).resolves.toBe(
+      'b9d4a32b18ed458acbedf7be772c2c12b48db7dbb72d63d238e719d6ab095bcc',
+    );
+    expect(digest).toHaveBeenCalledWith('SHA-256', expect.any(Uint8Array));
   });
 });

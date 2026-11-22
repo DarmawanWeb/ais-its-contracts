@@ -6,6 +6,232 @@ All notable changes to this package are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-22
+
+Hardening from the reports of the nine services built on 0.2.0 (the `LOCAL WORKAROUND`s they
+carry become removable): a per-key transactional outbox, message size limits, hot-standby
+failover that keeps its pin and state, published alert resolutions, database error hygiene, path
+parameter and validation helpers, and a lighter production install. Depends on
+`@darmawanweb/ais-its-contracts` `^0.4.0`. Every change is backward compatible at the source
+level (new options, new exports, additive fields, bug-fix defaults); the behaviour changes a
+service must know are listed under _Changed_ and step by step in [UPGRADING.md](UPGRADING.md).
+
+### Added
+
+#### NATS (`./nats`)
+
+- **Per-key outbox relay.** `outboxTableSql()` creates `seq` (identity, insertion order) and
+  `next_attempt_at` with partial indexes; `outboxUpgradeSql()` is the idempotent DDL that upgrades
+  a 0.2 table (backfills `seq` in the 0.2 order). On such tables every replica relays: rows of
+  one `entity_key` in order, up to `publishConcurrency` (64) keys at once, one `UPDATE` per pass; a
+  failed row backs off on its own (`retry: { baseMs, maxMs }`, equal jitter) and only its key
+  waits. New options `mode` (`'per-key' | 'serial'`, detected from the table), `publishConcurrency`,
+  `retry`, `maxAttempts`; `OutboxModule.forRootAsync({ useFactory, inject, imports })`;
+  `OutboxConfigError`; `OutboxRelay.mode()`; `OutboxRelayResult.retrying`, `deferred`, `mode`;
+  gauges `aisits_outbox_retrying_rows` and `aisits_outbox_failed_rows`; `DEFAULT_OUTBOX_RETRY_*`.
+  0.2 tables keep the serial relay with a startup warning, and old and new relays never publish
+  at the same time during a rolling upgrade (exclusive versus shared advisory lock).
+- **Message size.** `NatsClient.maxPayloadBytes()`; `EventTooLargeError` (`type`, `sizeBytes`,
+  `maxBytes`) thrown by the publisher **before** sending a message above the server's
+  `max_payload` (`aisits_events_published_total{outcome="rejected"}`);
+  `eventMessageSize(type, data, options?)` and `DEFAULT_HEADER_ALLOWANCE_BYTES`;
+  `enqueueEvent(..., { maxBytes })` refuses a row before the `INSERT`;
+  `NatsModuleOptions.minMaxPayloadBytes` (default `DEFAULT_MIN_MAX_PAYLOAD_BYTES` = 4 MiB) logs a
+  warning at connect for a smaller server.
+- **Streams.** `StreamManager.ensure(names, role, { refresh: true })`, `invalidate(names)` and
+  `roleOf(name)` (`StreamEnsureOptions`).
+- **Exclusive consumers.** `ExclusiveConsumerListener` (`onConsumerActivated`,
+  `onConsumerDeactivated` on `@EventHandler` providers, with `ExclusiveConsumerEvent` and
+  `ExclusiveConsumerTransition`); dispatch waits for the activation hook.
+  `ConsumerState` (`starting | active | standby | shared`), `EventConsumers.state(name)`,
+  `ConsumerHealth.state`; `aisits_events_consumer_activations_total{consumer}`.
+- `DeadLetterError`: a handler error that copies the message to the DLQ on any delivery, then acks.
+- `ReplayReport.completed` and `endedBy` (`ReplayEnd`: `'empty'`, `'end_of_stream'`, `'to'`,
+  `'aborted'`, `'closed'`).
+- Core subscriptions follow the contracts `delivery` (`'fanout'`: no queue group; an explicit
+  `queue` still wins) and validate payloads against `CORE_SUBSCRIPTION_PAYLOADS`: the parsed
+  payload is the handler's second argument (`CoreMessageHandler`, `CorePayloadSchema`), invalid
+  messages are dropped as `aisits_core_messages_total{outcome="invalid"}`.
+
+#### Database (`./db`)
+
+- `sanitizeError`, `databaseErrorInfo`, `SanitizedDatabaseError`, `DatabaseErrorInfo`: database
+  errors without bound parameters, `detail`, `where` and internal queries, through
+  `DrizzleQueryError` and cause chains.
+- `sqlStateOf(error)`, `isUniqueViolation(error, constraint?)`, `PG_SQLSTATES` (`UNIQUE_VIOLATION`,
+  `FOREIGN_KEY_VIOLATION`, `NOT_NULL_VIOLATION`, `CHECK_VIOLATION`, `SERIALIZATION_FAILURE`,
+  `DEADLOCK_DETECTED`, `LOCK_NOT_AVAILABLE` = `55P03`, `QUERY_CANCELED`) and `PgSqlState`.
+- `TransactionOptions.retryDelayMs` (number or `(retry) => ms`, default 10–50 ms, client released
+  while waiting).
+- `rowDate(value)` / `rowDateOrNull(value)` for `db.execute(sql…)` rows, whose timestamps are
+  strings.
+- `refreshContinuousAggregate(pool, view, from, to, options?)`: a refresh on a dedicated client
+  that retries TimescaleDB's `55P03` on overlapping refreshes (`retries` = `DEFAULT_REFRESH_RETRIES`
+  5, `retryDelayMs`, `statementTimeoutMs`, `onRetry`).
+- `MigrationsDirectoryNotFoundError` (`directory`, `cwd`) instead of an empty migration set when
+  the migrations directory does not exist.
+
+#### HTTP (`./http`) and root
+
+- `MAX_PAGE` = 1 000 000 (`PageQueryDto.page` maximum, also in OpenAPI).
+- Path parameters that read the raw segment and document it: `@UuidParam(name = 'id')`,
+  `@IntParam(name, { min, max })`, `@MmsiParam(name = 'mmsi')`, the parsers `parseUuidParam`,
+  `parseIntParam`, `parseMmsiParam` (`400 VALIDATION_FAILED` with field errors), `PathParamOptions`,
+  `IntParamOptions`.
+- `@IsOptionalNotNull()`: optional, but `null` is rejected (PATCH of `NOT NULL` columns).
+- `cors.exposedHeaders` of `bootstrapService`, `createPlatformApp` and `buildTestApp`;
+  `DEFAULT_EXPOSED_HEADERS`, `exposedHeadersOf()`.
+- `OpenApiOptions.securitySchemes`, `REFRESH_COOKIE_SECURITY_SCHEME` (cookie `aisits_rt`),
+  `OpenApiSecurityError`, `assertSecuritySchemesDeclared()`.
+- `clientIp(request)`: the normalized client address for storage and throttle keys.
+- `addPlatformAdminDescriptions`, `PLATFORM_ADMIN_ROLES_EXTENSION` (`x-required-roles`),
+  `PLATFORM_ADMIN_DESCRIPTION`.
+- Root: `trustedProxiesWarning()` (logged by `bootstrapService` in production when the default
+  `TRUSTED_PROXIES` are trusted), `SENSITIVE_ERROR_FIELDS`, `resolvePinoPretty()`.
+
+#### Auth, audit, metrics
+
+- `@RequirePlatformAdmin()` (`PLATFORM_ADMIN_KEY`): `403 PLATFORM_ADMIN_REQUIRED` for everyone but
+  platform administrators, API keys always refused, `x-required-roles: ['super_admin']` in
+  OpenAPI.
+- `AuditService.enqueue(client, entry, principal?, request?, { table? })`: an audit record in the
+  caller's transaction through the outbox (`AuditEnqueueOptions`).
+- `./metrics` re-exports the prom-client types `Counter`, `Gauge`, `Histogram`, `Registry`,
+  `Summary`.
+
+#### Detector SDK (`./analytics`)
+
+- **Published resolutions**: `alert.resolved.v1` on the raise's subject
+  (`AlertEmitterOptions.publishResolution`, `AlertResolutionPublisher`,
+  `DetectorRunnerOptions.publishResolutions` default `true`), at once or when the alert cooldown
+  since the last raise ends, cancelled by a re-raise within it; `AlertResolution.eventId`;
+  `AlertResolveOptions.publish`, `domain`, `methodId`; `AlertEmitter.flush()`,
+  `pendingResolutionCount`; `aisits_detector_alert_resolutions_total{detector}`.
+- **Activation**: `Detector.onActivated` / `onDeactivated`, `DetectorContext.isActive()`,
+  `DetectorEngine.activate()` / `deactivate()` / `active` (`DetectorActivation`,
+  `DetectorActivationOptions`), `DetectorRegistry.active`, `setActive`, `settled`, `owns`,
+  `dispatchActivated`, `dispatchDeactivated`; `ActivationOutcome` and
+  `aisits_detector_activations_total{outcome}`.
+- `AlertEmitter.replaceOpen(alerts, { filter })` (`AlertReplaceOptions`, `AlertReplaceResult`),
+  `forget(dedupKey, { accept })` (`AlertForgetOptions`), `withKey(dedupKey, fn)` (re-entrant);
+  `DetectorAlerts.forget(dedupKey)`.
+- Event times: `OpenAlert.firstOccurredAt` / `lastOccurredAt` (and `domain`, `methodId`),
+  `AlertUpdate.occurredAt`, `AlertPersistence.onRepeated(alert, occurredAt)` throttled by
+  `alertRepeatedIntervalMs` (`DEFAULT_ALERT_REPEATED_INTERVAL_MS` 60 s); `DEFAULT_ALERT_COOLDOWN_MS`.
+- `DetectorTestHarness`: `resolvedEvents`, `activate()`, `deactivate()`, `active`, `maintain()`,
+  options `alertRepeatedIntervalMs` and `publishResolutions`; `AlertEmitter.retryPending()`
+  returns `AlertPublicationResult`.
+
+#### Testing (`./testing`)
+
+- `startTestInfra` / `testInfraGlobalSetup` accept `nats: { mqtt?, maxPayload? }` (`TestNatsOptions`),
+  `TestNats.mqttUrl`, `testNatsConfig()`, `DEFAULT_TEST_NATS_MAX_PAYLOAD` (`'4MB'`).
+- Payload builders `makeTestZone`, `makeTestVesselSnapshot` (also still in `./analytics`),
+  `makeTestAlertRaised`, `makeTestAlertResolved(overrides?, fromRaise?)`, `TestZoneInput`.
+- `./internal` (no semver guarantees): `pullExpiresMsFor`, `orderingWarning`,
+  `DurableConsumerRunnerOptions`, `ConsumerState`, `coreSubscriptionQueue`,
+  `contractsCorePayloadSchema`, `checkCorePayload`, the message-size and outbox planning helpers,
+  `isNoStreamError`.
+
+### Changed
+
+- **Production install.** `testcontainers`, `@nestjs/testing` and `pino-pretty` are no longer
+  (optional) peer dependencies: `./testing` needs `testcontainers` and `@nestjs/testing` as the
+  service's **devDependencies**, pretty logs need `pino-pretty` there (resolved from the service's
+  `package.json` first). Tracing no longer uses `@opentelemetry/sdk-node`: it is built from
+  `@opentelemetry/sdk-trace`, `@opentelemetry/context-async-hooks` and `@opentelemetry/core`
+  3.1.1, exports traces only (OTLP/HTTP; NodeSDK's default OTLP metrics exporter, `b3` and
+  `OTEL_NODE_RESOURCE_DETECTORS` are gone) and honours `OTEL_SDK_DISABLED`, the sampler,
+  propagator, batch processor, span limit and resource variables. A minimal service's
+  `pnpm install --prod` shrinks from 213 MB (324 packages, with `dockerode`, `ssh2`, `@grpc/grpc-js`,
+  `protobufjs` and `sdk-node`) to 165 MB (183 packages, none of them): about 20 MB of the
+  NodeSDK/gRPC tree and the testcontainers tree (35–40 MB in services without a peer-stripping
+  hook; ais-pipeline measured 524 → 484 MB for it alone). `pnpm check:package` asserts it
+  (`scripts/prod-install-smoke.mjs`).
+- **Exclusive consumers** pull with `expires = min(30 s, max(1 s, pinnedTtlMs / 3))` and idle
+  heartbeats at half of it, so an idle pinned instance keeps its pin; an unpinned instance goes
+  standby and re-subscribes after 2 s; `stop()` releases the pin (only while this instance holds
+  it), so a standby takes over at once. `pinnedTtlMs` below 3 s logs a warning.
+- **Detector failover.** With the default exclusive consumer an instance starts inactive; its
+  activation (first position after the pin) reloads `loadOpen()` with replace semantics, re-seeds
+  vessel states from the mirror and runs `onActivated` before that position is dispatched.
+  **Ticks run only on the active instance**; `DetectorEngine.tick()` and the harness's `tick()`
+  do nothing while inactive. Rolling updates of several replicas are safe.
+- **Resolutions are published by default** (`publishResolutions: false` to opt out); roll out
+  notification (which handles `alert.resolved.v1`) first.
+- `{ useClass: X }` persistence of `DetectorRunnerModule` provides `X` and `ALERT_PERSISTENCE` as one
+  instance (`useExisting`), so `app.get(X)` works.
+- Core subscriptions: the default queue group follows the contracts definition's `delivery`.
+- CORS exposes `ETag` and `Location` in addition to `X-Request-Id`, `Retry-After` and
+  `WWW-Authenticate`.
+- `application/json` requests with an **empty body** parse to `undefined` (bodiless `POST`s with
+  the header no longer answer `400 FST_ERR_CTP_EMPTY_JSON_BODY`); prototype-poisoning protection and
+  the body limit are unchanged.
+- `PageQueryDto.page` is at most `MAX_PAGE`; `pageOffsetOf` throws `RangeError` for unsafe values.
+- `buildOpenApiDocument` (and `exportOpenApi`) fails with `OpenApiSecurityError` for an undeclared
+  security scheme reference or a redefined `bearer`, `apiKey` or `internalToken`.
+- Problem details of a database error outside production carry the driver's primary message
+  only; logs, the DLQ `Ais-Its-Dlq-Error` header and `outbox.last_error` are sanitized;
+  `REDACT_PATHS` adds `err.params` and `err.detail`.
+- `AuditService.buildRecord` (and so `record()`) normalizes the request ip with `clientIp`.
+- The test NATS server runs from a generated configuration with `max_payload` 4 MB (was the
+  server default of 1 MB); pass `nats: { maxPayload: '1MB' }` for the old limit.
+- Outbox rows that can never be published (invalid payload, subject mismatch, above
+  `max_payload`, `maxAttempts`) are parked in both modes; `OutboxRelay.onApplicationBootstrap()` is
+  async; `OutboxRelayResult.rejected` counts every parked row.
+- Constructors that Nest injects gained optional parameters: `EventPublisher` (a `StreamManager`),
+  `DetectorRunner` (the `ALERT_PERSISTENCE` hook), `DurableConsumerRunner` (`./internal`,
+  activation hooks).
+- `MigrationFileError.name` is typed `string` (subclasses).
+
+### Fixed
+
+- Bound parameters of failed queries (e.g. password hashes, e-mail addresses) no longer reach
+  logs, problem details, DLQ headers or `outbox.last_error` (`DrizzleQueryError` carried them in
+  its message and enumerable `params`).
+- `withTransaction` retried a bare `40001` / `40P01` but a drizzle-wrapped one only once; it now
+  detects SQLSTATEs through the cause chain.
+- `page=99999999999999999999` passed validation and produced `OFFSET 2e21`.
+- A stream deleted at runtime was never created again: the `StreamManager` memo now refreshes on
+  consumer recovery, dead-lettering and a failed publish to a produced stream (which retries once),
+  and `EventPublisher` really receives its `StreamManager` (it lacked an explicit `@Inject`).
+- An idle single exclusive instance was unpinned by the server (pull expiry equal to the pinned
+  TTL) and its next message waited up to a TTL; an unpinned instance never pulled again; a stopped
+  instance kept the pin for the full TTL.
+- A message whose activation hook still failed on its last delivery was lost silently; it is
+  dead-lettered.
+- A replay whose connection closed rejected with `ClosedConnectionError`; it ends as `'closed'`.
+- A standby that took over kept the open-alert state it loaded at boot (re-raising or missing
+  occurrences the previous instance changed), and detector ticks ran on every replica.
+- `OpenAlert.lastSeenAt` / `openedAt` used the emitter clock where services needed event times
+  (`firstOccurredAt`, `lastOccurredAt`, `onRepeated`).
+- One failing outbox row blocked every entity key behind it (per-key mode).
+
+### Removed
+
+- Dependency `@opentelemetry/sdk-node` (replaced by `@opentelemetry/sdk-trace`,
+  `@opentelemetry/context-async-hooks` and `@opentelemetry/core`).
+- `peerDependencies` / `peerDependenciesMeta` entries `testcontainers`, `@nestjs/testing` and
+  `pino-pretty`.
+
+### Migration
+
+Step by step, with the local workarounds each service can delete:
+[UPGRADING.md](UPGRADING.md). In short:
+
+1. Publish order: contracts 0.4.0 → kit 0.3.0 → template → services, and **notification before
+   safety and surveillance** (old notification instances ack-skip `alert.resolved.v1`).
+2. `pnpm add @darmawanweb/ais-its-contracts@^0.4.0 @darmawanweb/ais-its-nest@^0.3.0`, keep
+   `testcontainers`, `@nestjs/testing` (and `pino-pretty`) as devDependencies, drop the kit entry of
+   `.pnpmfile.cjs` and add the `@nestjs/terminus` gRPC peers to it.
+3. Services with an outbox table of 0.2: add a migration with `outboxUpgradeSql()` (or keep the
+   serial relay, with a startup warning).
+4. Detector services: implement `loadOpen` (with `domain`, `methodId`, event times), optionally
+   `onRepeated`; check `isActive()` in zone/vessel hooks that raise or resolve; pass
+   `publish: false` for resolutions of occurrences another writer already ended.
+5. Regenerate `openapi.json` (page maximum, path parameter schemas, security schemes,
+   `x-required-roles`) and set `TRUSTED_PROXIES` to the gateway in production.
+
 ## [0.2.0] - 2026-11-21
 
 Fixes of the 0.1.0 review (correctness, security and developer experience) and the shared

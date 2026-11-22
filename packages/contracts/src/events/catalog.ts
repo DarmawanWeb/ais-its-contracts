@@ -141,6 +141,23 @@ export const EVENT_CATALOG = {
     description:
       'An alert raised by a safety (ews, collision) or surveillance (transhipment, anomaly, dark, geofence, fishing) detector.',
   },
+  [EVENT_TYPES.ALERT_RESOLVED]: {
+    type: EVENT_TYPES.ALERT_RESOLVED,
+    payloadName: 'AlertResolvedV1',
+    stream: 'ALERTS',
+    subject: 'alert.v1.{alertType}.{mmsi}',
+    parameters: {
+      alertType: {
+        description:
+          'Alert type of the resolved occurrence (registry ALERT_TYPES or a future type).',
+        examples: KNOWN_ALERT_TYPES,
+      },
+      mmsi: MMSI_PARAMETER,
+    },
+    producers: ['safety', 'surveillance'],
+    description:
+      'The end of an alert occurrence, published by the detector that raised it on the same subject (after the alert cooldown; a re-raise within it cancels the resolution). Consumers resolve the unresolved inbox alert with the dedupKey unless it merged a later occurrence.',
+  },
   [EVENT_TYPES.NOTIFY_EMAIL_REQUESTED]: {
     type: EVENT_TYPES.NOTIFY_EMAIL_REQUESTED,
     payloadName: 'EmailRequestedV1',

@@ -7,6 +7,79 @@ All notable changes to this repository are documented in this file. The format f
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
+`@darmawanweb/ais-its-contracts` 0.4.0 and `@darmawanweb/ais-its-nest` 0.3.0: the hardening reported
+by the services built on 0.3.0 / 0.2.0. Everything is additive (new event type, new exports,
+literal consumer types, catalog data); the kit's changes are listed in
+[`packages/nest/CHANGELOG.md`](packages/nest/CHANGELOG.md) and the service upgrade steps in
+[`packages/nest/UPGRADING.md`](packages/nest/UPGRADING.md). Upgrade **notification before
+safety and surveillance**: kit 0.3.0 publishes `alert.resolved.v1` by default, and an old
+notification acknowledges event types it does not know.
+
+### Added
+
+#### `@darmawanweb/ais-its-contracts`
+
+- **`alert.resolved.v1`** (`EVENT_TYPES.ALERT_RESOLVED`, `AlertResolvedV1Schema`, `AlertResolvedV1`,
+  `ALERT_RESOLUTION_REASON_MAX_LENGTH` = 500): published by safety and surveillance on the raise's
+  subject `alert.v1.<alertType>.<mmsi>` in stream `ALERTS` (entity key = mmsi), with `alertId`,
+  `type`, `domain`, `severity`, `mmsi`, `relatedMmsi`, `zoneId`, `dedupKey`, `openedAt`,
+  `resolvedAt`, `reason`, `methodId`, `data`. Consumer contract (TSDoc): resolve the unresolved
+  inbox alert with that `dedupKey` unless it merged an occurrence later than `resolvedAt`; do
+  nothing when there is none; idempotent by event id. JSON Schema
+  `schemas/alert.resolved.v1.json` and the AsyncAPI message.
+- **Notification fan-out** core subscription `notification-realtime-fanout`
+  (`aisits.notification.realtime.v1`, `SUBJECT_FILTERS.NOTIFICATION_REALTIME`,
+  `subjects.notificationRealtime()`, `delivery: 'fanout'`) with the payload
+  `RealtimeAlertFanoutSchema` (`{ event: 'alert:raised' | 'alert:updated', rooms, alert }`,
+  `REALTIME_FANOUT_MAX_ROOMS` 16, `REALTIME_FANOUT_MAX_ROOM_LENGTH` 128) in `./realtime`, and
+  `CORE_SUBSCRIPTION_PAYLOADS` (payload schema per core subscription). `CoreSubscriptionDefinition`
+  gains `delivery?: 'queue' | 'fanout'` (`CORE_SUBSCRIPTION_DELIVERIES`,
+  `DEFAULT_CORE_SUBSCRIPTION_DELIVERY` = `'queue'`, `coreSubscriptionDelivery()`). The subject and
+  payload are the ones notification already uses, so mixed versions interoperate.
+- Consumer builders with literal types: `defineDurableConsumer(definition)`,
+  `positionFeedConsumer(durableName, service, description)`,
+  `fleetProjectionConsumer(durableName, service)`, `zoneProjectionConsumer(durableName, service)`.
+- `ERROR_DEFINITIONS.PLATFORM_ADMIN_REQUIRED` (`403`, "Platform administrator required").
+- `hashApiKey(key)` (async WebCrypto SHA-256, lowercase hex: the definition of
+  `api_keys.key_hash`; `TypeError` for a non-key, never echoing it) and `API_KEY_HASH_ALGORITHM`.
+- The shared fuel formula grammar of fleet and emission in `./domain`: `parseFuelFormula`,
+  `evaluateFuelFormula`, `validateFuelFormula`, `FUEL_FORMULA_LIMITS` (500 characters, depth 32,
+  500 tokens), `FUEL_FORMULA_VARIABLE` (`speedKnot`), `FUEL_FORMULA_FUNCTIONS`,
+  `FuelFormulaSyntaxError` (`reason`, `position`) and the node, context, limit and validation
+  types (method `fuel.first_formula`). A 200 000-input differential fuzz against both services'
+  implementations found no verdict difference with fleet and bit-identical values with emission.
+- Methodology catalog: 18 methods (13 ids services already tagged, plus `geo.zone_geometry_rules`,
+  `geo.zone_buffer_extent`, `geo.map_simplification`, `telemetry.reading_validation`,
+  `data.ais_position_time`), 9 references (appended, so citation numbers are stable; marked
+  unverified and `needsCitation`), the domains `notification` and `security`, and the status
+  `not_implemented`. The catalog has 109 methods (104 implemented, 5 not implemented, 0 planned)
+  and 149 references.
+- `pnpm references:verify [--services <dir>]` (`scripts/verify-references.ts`): every
+  implemented method's `implementedBy` module and symbol exist and carry its `@method` tag, every
+  tag names a catalogued method, and no status is stale (`implementedBy.module` grammar:
+  `<path>[#<symbol>][ (<remark>)]`).
+
+### Changed
+
+#### `@darmawanweb/ais-its-contracts`
+
+- `CONSUMERS` entries keep literal types (type-only; runtime values unchanged), so the kit's
+  `ConsumerEnvelope<'notification-fleet'>` is exactly the two fleet events and a
+  `switch (event.type)` can be exhaustive. A definition annotated `: DurableConsumerDefinition`
+  still widens to every event type: use `defineDurableConsumer`.
+- `CONSUMERS['notification-alerts']` delivers `alert.raised.v1` **and** `alert.resolved.v1`
+  (`ConsumerEnvelope<'notification-alerts'>` becomes a union; TypeScript makes notification handle
+  it).
+- `CORE_SUBSCRIPTIONS['telemetry-mqtt']` declares `delivery: 'queue'` (the default).
+- The catalog statuses are corrected: all 82 methods marked `planned` are `implemented` (they were
+  tagged in service code), 38 `implementedBy` values point at verified `module#symbol`s, and 14
+  methods name secondary implementations in their notes. `@method` tags were added to
+  `haversineDistance`, `NAV_STATUS`, `assignCiiGrade` and `ciiGradeBoundaries`.
+- AsyncAPI: one channel and message per core subscription, `x-ais-its-consumer.delivery` on core
+  operations.
+
 ## [0.3.0] - 2026-11-21
 
 `@darmawanweb/ais-its-contracts` 0.3.0 and `@darmawanweb/ais-its-nest` 0.2.0 (review fixes; the

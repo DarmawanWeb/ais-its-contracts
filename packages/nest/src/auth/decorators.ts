@@ -12,7 +12,10 @@ import { ApiExtension, ApiSecurity } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 
 import { UnauthorizedError } from '../errors/domain-error.js';
-import { SECURITY_SCHEMES } from '../http/openapi-security.js';
+import {
+  PLATFORM_ADMIN_ROLES_EXTENSION,
+  SECURITY_SCHEMES,
+} from '../http/openapi-security.js';
 import { getRequestPrincipal } from './request-principal.js';
 
 /** Metadata key of {@link Public}. */
@@ -23,6 +26,8 @@ export const REQUIRED_PERMISSIONS_KEY = 'aisits:auth:permissions';
 export const API_KEY_SCOPES_KEY = 'aisits:auth:api-key-scopes';
 /** Metadata key of {@link Internal}. */
 export const IS_INTERNAL_KEY = 'aisits:auth:internal';
+/** Metadata key of {@link RequirePlatformAdmin}. */
+export const PLATFORM_ADMIN_KEY = 'aisits:auth:platform-admin';
 
 /**
  * Opens a route (or every route of a controller) to anonymous callers. The
@@ -45,6 +50,29 @@ export function RequirePermissions(
   return applyDecorators(
     SetMetadata(REQUIRED_PERMISSIONS_KEY, permissions),
     ApiExtension('x-required-permissions', permissions),
+  );
+}
+
+/**
+ * Restricts a route (or every route of a controller) to platform
+ * administrators: the global guard requires a signed-in user with the
+ * `super_admin` role (`UserPrincipal.isPlatformAdmin`); other users and API
+ * keys get `403 PLATFORM_ADMIN_REQUIRED`. Combines with
+ * `@RequirePermissions` (both must hold). A handler-level `@Public()` wins
+ * over a controller-level `@RequirePlatformAdmin()`, as for the other
+ * decorators. OpenAPI shows `x-required-roles: ["super_admin"]`, and
+ * `buildOpenApiDocument` adds `PLATFORM_ADMIN_DESCRIPTION` (`./http`) to
+ * the operation description.
+ *
+ * @example
+ * @RequirePlatformAdmin()
+ * @Post('vessels/:id/republish')
+ * republish(@UuidParam() id: string) {}
+ */
+export function RequirePlatformAdmin(): ClassDecorator & MethodDecorator {
+  return applyDecorators(
+    SetMetadata(PLATFORM_ADMIN_KEY, true),
+    ApiExtension(PLATFORM_ADMIN_ROLES_EXTENSION, ['super_admin']),
   );
 }
 

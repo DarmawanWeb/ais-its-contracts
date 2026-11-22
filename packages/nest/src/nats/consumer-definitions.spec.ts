@@ -31,5 +31,18 @@ describe('ordered consumer references', () => {
     expectTypeOf<ConsumerEnvelope<'emission-fuel'>>().toEqualTypeOf<
       TypedEventEnvelope<typeof EVENT_TYPES.FUEL_READING_RECORDED>
     >();
+    // Contracts 0.4: consumers built with the contracts helpers keep their
+    // literal event types (CTR-1), so envelopes of durable consumers narrow too.
+    expectTypeOf<
+      ConsumerEnvelope<'notification-fleet'>['type']
+    >().toEqualTypeOf<
+      | typeof EVENT_TYPES.FLEET_VESSEL_UPSERTED
+      | typeof EVENT_TYPES.FLEET_VESSEL_DELETED
+    >();
+    expectTypeOf<
+      ConsumerEnvelope<'notification-alerts'>['type']
+    >().toEqualTypeOf<
+      typeof EVENT_TYPES.ALERT_RAISED | typeof EVENT_TYPES.ALERT_RESOLVED
+    >();
   });
 });

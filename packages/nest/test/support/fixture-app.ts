@@ -6,9 +6,11 @@ import {
   Module,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
+  Query,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsInt,
@@ -22,12 +24,22 @@ import {
 } from 'class-validator';
 
 import {
+  IntParam,
+  IsOptionalNotNull,
+  MmsiParam,
+  pageOffsetOf,
+  PageQueryDto,
+  UuidParam,
+} from '../../src/http/index.js';
+
+import {
   AllowApiKey,
   CurrentPrincipal,
   Internal,
   type Principal,
   Public,
   RequirePermissions,
+  RequirePlatformAdmin,
 } from '../../src/auth/index.js';
 import { ConflictError, NotFoundError } from '../../src/errors/index.js';
 
@@ -54,6 +66,18 @@ export class CreateVesselDto {
   @ValidateNested({ each: true })
   @Type(() => PositionDto)
   positions!: PositionDto[];
+}
+
+/** PATCH body: `name` may be omitted but not cleared with `null`. */
+export class UpdateFixtureZoneDto {
+  @IsOptionalNotNull()
+  @IsString()
+  @MinLength(1)
+  name?: string;
+
+  @IsOptionalNotNull()
+  @IsInt()
+  bufferM?: number;
 }
 
 /** Routes exercising the platform's HTTP conventions. */
@@ -99,6 +123,47 @@ export class FixtureController {
   }
 
   @Public()
+  @Get('pages')
+  pages(@Query() query: PageQueryDto): { readonly offset: number } {
+    return { offset: pageOffsetOf(query) };
+  }
+
+  @Public()
+  @Get('by-mmsi/:mmsi')
+  byMmsi(@MmsiParam() mmsi: number): { readonly mmsi: number } {
+    return { mmsi };
+  }
+
+  @Public()
+  @Get('zones/:id/years/:year')
+  zoneYear(
+    @UuidParam() id: string,
+    @IntParam('year', { min: 2000, max: 2100 }) year: number,
+  ): { readonly id: string; readonly year: number } {
+    return { id, year };
+  }
+
+  @Public()
+  @Patch('zones/:id')
+  updateZone(
+    @UuidParam() id: string,
+    @Body() body: UpdateFixtureZoneDto,
+  ): { readonly id: string; readonly fields: string[] } {
+    const fields = Object.entries(body)
+      .filter(([, value]) => value !== undefined)
+      .map(([field]) => field);
+    return { id, fields: fields.sort() };
+  }
+
+  @Public()
+  @Post('alerts/:id/ack')
+  @HttpCode(204)
+  ack(@UuidParam() id: string): void {
+    // Acknowledged; nothing to return (a bodiless POST).
+    if (id === '') throw new Error('unreachable: the id was validated');
+  }
+
+  @Public()
   @Post('conflict')
   conflict(): never {
     throw new ConflictError('MMSI already registered', {
@@ -110,6 +175,20 @@ export class FixtureController {
   @Get('crash')
   crash(): never {
     throw new Error('database password is hunter2');
+  }
+
+  @RequirePlatformAdmin()
+  @AllowApiKey('ais:ingest')
+  @ApiOperation({
+    summary: 'Republish',
+    description: 'Re-sends every snapshot.',
+  })
+  @Post('republish')
+  @HttpCode(202)
+  republish(@CurrentPrincipal() principal: Principal): {
+    readonly republishedBy: string;
+  } {
+    return { republishedBy: principal.id };
   }
 
   @AllowApiKey('ais:ingest')

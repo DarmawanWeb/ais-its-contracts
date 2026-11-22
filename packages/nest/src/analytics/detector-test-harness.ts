@@ -1,29 +1,30 @@
-import {
-  type GeoJsonGeometry,
-  newId,
-  type ZoneKind,
-} from '@darmawanweb/ais-its-contracts/domain';
-import {
-  type AlertRaisedV1,
-  type VesselSnapshotV1,
-  VesselSnapshotV1Schema,
-  type ZoneSnapshotV1,
-  ZoneSnapshotV1Schema,
+import type {
+  AlertRaisedV1,
+  AlertResolvedV1,
+  VesselSnapshotV1,
+  ZoneSnapshotV1,
 } from '@darmawanweb/ais-its-contracts/events';
 
 import { MetricsService } from '../metrics/metrics.service.js';
 import {
+  makeTestVesselSnapshot,
+  makeTestZone,
+  type TestZoneInput,
+} from '../testing/fixtures.js';
+import {
   AlertEmitter,
   type AlertPersistence,
+  type AlertPublicationResult,
   type AlertResolution,
   type AlertUpdate,
+  type OpenAlert,
 } from './alert-emitter.js';
 import type {
   AnyDetector,
   DetectorVesselChange,
   DetectorZoneChange,
 } from './detector.js';
-import { DetectorEngine } from './detector-engine.js';
+import { type DetectorActivation, DetectorEngine } from './detector-engine.js';
 import { DetectorMetrics, type PositionOutcome } from './detector-metrics.js';
 import {
   type DetectorDescription,
@@ -44,13 +45,13 @@ import {
 } from './vessel-state-store.js';
 import { ZoneIndex } from './zone-index.js';
 
+// The payload builders live in ./testing (no container dependency) and stay
+// exported from ./analytics for detector tests.
+export { makeTestVesselSnapshot, makeTestZone, type TestZoneInput };
+
 /** A synthetic position: `mmsi`, `lat` and `lon` are required, the rest has defaults. */
 export type TestPositionInput = Pick<VesselPosition, 'mmsi' | 'lat' | 'lon'> &
   Partial<Omit<VesselPosition, 'mmsi' | 'lat' | 'lon'>>;
-
-/** A synthetic zone: `geometry` is required (and `kind`, default `custom`). */
-export type TestZoneInput = Pick<ZoneSnapshotV1, 'geometry'> &
-  Partial<Omit<ZoneSnapshotV1, 'geometry'>>;
 
 /** Options of {@link DetectorTestHarness.create}. */
 export interface DetectorTestHarnessOptions {
@@ -64,12 +65,23 @@ export interface DetectorTestHarnessOptions {
   readonly now?: Date | undefined;
   /** Alert cooldown, ms. Default 10 min. */
   readonly alertCooldownMs?: number | undefined;
+  /** Event-time throttle of `AlertPersistence.onRepeated`, ms. Default 60 s. */
+  readonly alertRepeatedIntervalMs?: number | undefined;
+  /**
+   * Record resolutions as published `alert.resolved.v1` events
+   * ({@link DetectorTestHarness.resolvedEvents}), like the runner's default.
+   * Default `true`.
+   */
+  readonly publishResolutions?: boolean | undefined;
   readonly distanceModel?: DistanceModel | undefined;
   readonly pairSearch?:
     Omit<PairSearchOptions, 'clock' | 'distanceModel'> | undefined;
   readonly vesselState?:
     Omit<VesselStateStoreOptions, 'clock' | 'mirror'> | undefined;
-  /** Persistence hook to exercise (calls are recorded either way). */
+  /**
+   * Persistence hook to exercise (calls are recorded either way); its
+   * `loadOpen` also feeds {@link DetectorTestHarness.activate}.
+   */
   readonly persistence?: AlertPersistence | undefined;
   /** Upper bound of a detector call, ms. Default 10 s. */
   readonly callTimeoutMs?: number | undefined;
@@ -89,9 +101,15 @@ const DEFAULT_START = new Date('2026-01-01T00:00:00.000Z');
 /**
  * Runs detectors without NATS, Nest or a database (spec §18): feed synthetic
  * positions, tracks, zones and vessels, move the clock, and inspect the
- * published alerts, updates and resolutions. The detectors see exactly what
- * the runner gives them in production (same engine, registry, configuration
- * parsing and failure isolation).
+ * published alerts, updates, resolutions and resolution events. The
+ * detectors see exactly what the runner gives them in production (same
+ * engine, registry, configuration parsing and failure isolation); the
+ * harness starts as the active instance, and {@link activate} /
+ * {@link deactivate} simulate a failover.
+ *
+ * Resolution events follow the emitter's cooldown: one resolved within
+ * `alertCooldownMs` of its raise is published by {@link maintain} once the
+ * window ended (the runner's housekeeping, every 30 s in production).
  *
  * @example
  * const harness = DetectorTestHarness.create({ detectors: [new EwsDetector()], env: { EWS_DANGER_M: '500' } });
@@ -104,8 +122,10 @@ export class DetectorTestHarness {
   readonly alerts: AlertRaisedV1[] = [];
   /** De-escalations and suppressed re-raises, in order. */
   readonly updates: AlertUpdate[] = [];
-  /** Resolutions, in order. */
+  /** Resolutions (persistence `onResolved`), in order. */
   readonly resolutions: AlertResolution[] = [];
+  /** Published resolution events (`alert.resolved.v1` payloads), in order. */
+  readonly resolvedEvents: AlertResolvedV1[] = [];
   /** Log lines of the detectors (`<level> <detector>: <message>`), e.g. isolated failures. */
   readonly logs: string[] = [];
   /** Registry metrics (a private registry). */
@@ -115,6 +135,8 @@ export class DetectorTestHarness {
   readonly services: DetectorServices;
   private clock: Date;
   private readonly stepMs: number;
+  /** The persistence hook's `loadOpen`, for {@link activate}. */
+  private readonly loadOpen: (() => Promise<readonly OpenAlert[]>) | undefined;
   private readonly lastPositions = new Map<number, VesselPosition>();
 
   private constructor(options: DetectorTestHarnessOptions) {
@@ -129,6 +151,9 @@ export class DetectorTestHarness {
       onUpdated: async (update) => {
         this.updates.push(update);
         await persistence?.onUpdated?.(update);
+      },
+      onRepeated: async (alert, occurredAt) => {
+        await persistence?.onRepeated?.(alert, occurredAt);
       },
       onResolved: async (resolution) => {
         this.resolutions.push(resolution);
@@ -148,11 +173,19 @@ export class DetectorTestHarness {
       alerts: new AlertEmitter({
         clock: now,
         cooldownMs: options.alertCooldownMs,
+        repeatedIntervalMs: options.alertRepeatedIntervalMs,
         persistence: recording,
         publish: (alert) => {
           this.alerts.push(alert);
           return Promise.resolve();
         },
+        publishResolution:
+          options.publishResolutions === false
+            ? undefined
+            : (event) => {
+                this.resolvedEvents.push(event);
+                return Promise.resolve();
+              },
       }),
       clock: now,
     };
@@ -177,6 +210,7 @@ export class DetectorTestHarness {
       this.services,
       detectorMetrics,
     );
+    this.loadOpen = persistence?.loadOpen?.bind(persistence);
   }
 
   /**
@@ -265,7 +299,49 @@ export class DetectorTestHarness {
     });
   }
 
-  /** Runs `onTick` of the detectors (default: all that tick) at `now` (default: the clock). */
+  /** `true` while the harness is the active instance (the default; see {@link activate}). */
+  get active(): boolean {
+    return this.engine.active;
+  }
+
+  /**
+   * Simulates this instance becoming the active one after a failover, like
+   * the runner when its exclusive position consumer is pinned
+   * (`DetectorEngine.activate`): pending alert publications go out, the
+   * open occurrences are replaced with the persistence hook's `loadOpen()`
+   * (kept when it has none), the detectors' `onActivated` run, then
+   * `isActive()` is `true` and ticks run again.
+   */
+  activate(): Promise<DetectorActivation> {
+    return this.engine.activate({ loadOpen: this.loadOpen });
+  }
+
+  /**
+   * Simulates losing the active role (`DetectorEngine.deactivate`):
+   * `isActive()` turns `false`, {@link tick} does nothing, pending alert
+   * publications go out (resolutions within their cooldown included) and
+   * the detectors' `onDeactivated` run.
+   */
+  deactivate(): Promise<AlertPublicationResult> {
+    return this.engine.deactivate();
+  }
+
+  /**
+   * Runs the runner's periodic housekeeping now (every 30 s in production):
+   * retries failed alert publications, publishes the resolutions whose
+   * cooldown window ended, forgets expired cooldowns and old neighbours.
+   */
+  async maintain(): Promise<AlertPublicationResult> {
+    const result = await this.services.alerts.retryPending();
+    this.services.alerts.prune(this.clock);
+    this.services.pairs.prune();
+    return result;
+  }
+
+  /**
+   * Runs `onTick` of the detectors (default: all that tick) at `now`
+   * (default: the clock); nothing while the harness is not {@link active}.
+   */
   async tick(
     now: Date = this.clock,
     detectorIds?: readonly string[],
@@ -292,11 +368,12 @@ export class DetectorTestHarness {
     return this.metrics.render();
   }
 
-  /** Forgets the recorded alerts, updates and resolutions (state is kept). */
+  /** Forgets the recorded alerts, updates, resolutions and resolution events (state is kept). */
   clearRecords(): void {
     this.alerts.length = 0;
     this.updates.length = 0;
     this.resolutions.length = 0;
+    this.resolvedEvents.length = 0;
   }
 
   /** Default time of a vessel's next position. */
@@ -338,93 +415,4 @@ export class DetectorTestHarness {
       previous,
     };
   }
-}
-
-/** A valid `ZoneSnapshotV1` from a geometry and overrides (validated with the contracts schema). */
-export function makeTestZone(
-  input: TestZoneInput,
-  updatedAt: Date = DEFAULT_START,
-): ZoneSnapshotV1 {
-  const id = input.id ?? newId();
-  const kind: ZoneKind = input.kind ?? 'custom';
-  const geometry: GeoJsonGeometry = input.geometry;
-  return ZoneSnapshotV1Schema.parse({
-    id,
-    orgId: input.orgId ?? null,
-    code: input.code ?? `${kind}-${id.slice(-8)}`,
-    name: input.name ?? `Test ${kind} zone`,
-    kind,
-    geometry,
-    bufferM: input.bufferM ?? 0,
-    active: input.active ?? true,
-    alertOnEnter: input.alertOnEnter ?? false,
-    properties: input.properties ?? {},
-    updatedAt: input.updatedAt ?? updatedAt.toISOString(),
-  });
-}
-
-/**
- * A valid `VesselSnapshotV1` (a 52 000 DWT bulk carrier) with overrides,
- * validated with the contracts schema; nested objects are replaced, not merged.
- */
-export function makeTestVesselSnapshot(
-  overrides: Partial<VesselSnapshotV1> & Pick<VesselSnapshotV1, 'mmsi'>,
-): VesselSnapshotV1 {
-  return VesselSnapshotV1Schema.parse({
-    id: newId(),
-    orgId: null,
-    imo: null,
-    name: `Test vessel ${overrides.mmsi}`,
-    flag: 'ID',
-    builtYear: 2010,
-    status: 'active',
-    annualVoyagePercentage: 70,
-    dimensions: {
-      capacity: 52_000,
-      dwt: 52_000,
-      gt: 31_200,
-      cb: 0.82,
-      lwl: 186.5,
-      b: 32.26,
-      t: 12.1,
-      cwp: 0.89,
-      loa: 189.99,
-      lpp: 182,
-      cp: 0.83,
-      cm: 0.99,
-      cbnsp: 0.81,
-      bulbousBow: true,
-      cstern: 0,
-      c1: 2.12,
-      c2: 1,
-      c3: 1,
-      c5: 1,
-      vs: 14.2,
-    },
-    type: {
-      id: newId(),
-      code: 'bulk_carrier',
-      name: 'Bulk carrier',
-      capacityUnit: 'DWT',
-      a: 4745,
-      c: 0.622,
-      capacityFixed: null,
-      d: { d1: 0.86, d2: 0.94, d3: 1.06, d4: 1.18 },
-    },
-    fuel: {
-      id: newId(),
-      code: 'HFO',
-      name: 'Heavy fuel oil',
-      carbonContent: 0.8493,
-      conversionFactor: 3.114,
-      density: 0.991,
-    },
-    mainEngine: null,
-    auxEngines: [],
-    auxEngineQuantity: 0,
-    firstFuelFormula: null,
-    portIds: [],
-    updatedAt: DEFAULT_START.toISOString(),
-    ...overrides,
-  });
 }

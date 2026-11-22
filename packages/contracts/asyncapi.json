@@ -2,7 +2,7 @@
   "asyncapi": "3.0.0",
   "info": {
     "title": "AIS Maritime Intelligence Events",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "NATS JetStream contracts of AIS Maritime Intelligence v2 (spec section 7), generated from @darmawanweb/ais-its-contracts. Every message is a JSON event envelope; \"data\" follows the payload schema of its \"type\".",
     "license": { "name": "UNLICENSED" }
   },
@@ -206,7 +206,8 @@
         "mmsi": { "description": "Vessel MMSI (9 digits)." }
       },
       "messages": {
-        "AlertRaisedV1": { "$ref": "#/components/messages/AlertRaisedV1" }
+        "AlertRaisedV1": { "$ref": "#/components/messages/AlertRaisedV1" },
+        "AlertResolvedV1": { "$ref": "#/components/messages/AlertResolvedV1" }
       },
       "x-ais-its-stream": {
         "retention": "limits",
@@ -318,6 +319,17 @@
       "messages": {
         "DeviceTelemetry": { "$ref": "#/components/messages/DeviceTelemetry" }
       }
+    },
+    "notificationRealtime": {
+      "address": "aisits.notification.realtime.v1",
+      "title": "Alert push fan-out (core NATS)",
+      "description": "Core NATS subject on which the notification instance that changed an alert publishes its alert:raised / alert:updated push; every instance (no queue group) emits it to the rooms of its own socket clients. Not persisted in JetStream; a push is best effort, the inbox stays the source of truth.",
+      "parameters": {},
+      "messages": {
+        "RealtimeAlertFanout": {
+          "$ref": "#/components/messages/RealtimeAlertFanout"
+        }
+      }
     }
   },
   "operations": {
@@ -399,6 +411,13 @@
       "channel": { "$ref": "#/channels/alert" },
       "summary": "Published by safety, surveillance.",
       "messages": [{ "$ref": "#/channels/alert/messages/AlertRaisedV1" }],
+      "x-ais-its-producers": ["safety", "surveillance"]
+    },
+    "send-alert.resolved.v1": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/alert" },
+      "summary": "Published by safety, surveillance.",
+      "messages": [{ "$ref": "#/channels/alert/messages/AlertResolvedV1" }],
       "x-ais-its-producers": ["safety", "surveillance"]
     },
     "send-notify.email.requested.v1": {
@@ -658,8 +677,11 @@
     "receive-notification-alerts": {
       "action": "receive",
       "channel": { "$ref": "#/channels/alert" },
-      "summary": "notification: Stores alerts in the inbox, applies alert rules and pushes them to clients.",
-      "messages": [{ "$ref": "#/channels/alert/messages/AlertRaisedV1" }],
+      "summary": "notification: Stores alerts in the inbox, applies alert rules and pushes them to clients; resolves them on alert.resolved.v1.",
+      "messages": [
+        { "$ref": "#/channels/alert/messages/AlertRaisedV1" },
+        { "$ref": "#/channels/alert/messages/AlertResolvedV1" }
+      ],
       "x-ais-its-consumer": {
         "kind": "durable",
         "durableName": "notification-alerts",
@@ -758,7 +780,24 @@
       "x-ais-its-consumer": {
         "kind": "core",
         "service": "telemetry",
-        "subject": "aisits.telemetry.*"
+        "subject": "aisits.telemetry.*",
+        "delivery": "queue"
+      }
+    },
+    "receive-notification-realtime-fanout": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/notificationRealtime" },
+      "summary": "notification: alert:raised / alert:updated pushes fanned out to every notification instance (Socket.IO rooms).",
+      "messages": [
+        {
+          "$ref": "#/channels/notificationRealtime/messages/RealtimeAlertFanout"
+        }
+      ],
+      "x-ais-its-consumer": {
+        "kind": "core",
+        "service": "notification",
+        "subject": "aisits.notification.realtime.v1",
+        "delivery": "fanout"
       }
     }
   },
@@ -2764,6 +2803,129 @@
         "title": "AlertRaisedV1",
         "description": "An alert raised by a safety or surveillance detector (alert type registry ALERT_TYPES)."
       },
+      "AlertResolvedV1": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "Resolution id (the envelope id and Nats-Msg-Id of the event); consumers are idempotent by it"
+          },
+          "alertId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "description": "Id of the last alert.raised.v1 of the resolved occurrence"
+          },
+          "type": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Alert type: a registry type (ALERT_TYPES) or a future type; consumers accept unknown types",
+            "examples": [
+              "ews",
+              "collision",
+              "transhipment",
+              "anomaly",
+              "dark",
+              "geofence",
+              "fishing"
+            ]
+          },
+          "domain": {
+            "type": "string",
+            "enum": ["safety", "surveillance"],
+            "description": "Analytics domain: safety or surveillance"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "critical"],
+            "description": "Severity of the last published raise of the occurrence"
+          },
+          "mmsi": {
+            "type": "integer",
+            "minimum": 100000000,
+            "maximum": 999999999,
+            "description": "Maritime Mobile Service Identity (9 digits)"
+          },
+          "relatedMmsi": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 100000000,
+                "maximum": 999999999,
+                "description": "Maritime Mobile Service Identity (9 digits)"
+              },
+              { "type": "null" }
+            ],
+            "description": "Second vessel involved (e.g. collision, transhipment)"
+          },
+          "zoneId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "description": "UUID"
+              },
+              { "type": "null" }
+            ]
+          },
+          "dedupKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Key of the resolved occurrence (the dedupKey of its alert.raised.v1 events)"
+          },
+          "openedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "Start of the occurrence"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "description": "End of the condition (signal time, normally not before openedAt)"
+          },
+          "reason": {
+            "anyOf": [
+              { "type": "string", "maxLength": 500 },
+              { "type": "null" }
+            ],
+            "description": "Why the occurrence ended, e.g. \"left the pipeline zone\""
+          },
+          "methodId": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+            "description": "Methodology catalog id of the rule that raised the alert (spec 17)"
+          },
+          "data": {
+            "type": "object",
+            "propertyNames": { "type": "string" },
+            "additionalProperties": {},
+            "description": "Detector specific details of the resolution"
+          }
+        },
+        "required": [
+          "id",
+          "alertId",
+          "type",
+          "domain",
+          "severity",
+          "mmsi",
+          "relatedMmsi",
+          "zoneId",
+          "dedupKey",
+          "openedAt",
+          "resolvedAt",
+          "reason",
+          "methodId",
+          "data"
+        ],
+        "title": "AlertResolvedV1",
+        "description": "The end of an alert occurrence, published by the detector that raised it on the same subject. Consumers resolve the unresolved inbox alert with this dedupKey unless it merged an occurrence later than resolvedAt, do nothing when there is none, and are idempotent by id."
+      },
       "EmailRequestedV1": {
         "type": "object",
         "properties": {
@@ -2868,6 +3030,168 @@
         ],
         "title": "AuditRecordedV1",
         "description": "An action recorded for the central audit log."
+      },
+      "RealtimeAlertFanout": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "enum": ["alert:raised", "alert:updated"],
+            "description": "Server → client event to emit"
+          },
+          "rooms": {
+            "minItems": 1,
+            "maxItems": 16,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "description": "Rooms to emit to, e.g. \"authority\" and \"org:<orgId>\""
+          },
+          "alert": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "description": "Alert id (also the inbox id)"
+              },
+              "type": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "Alert type: a registry type (ALERT_TYPES) or a future type; consumers accept unknown types",
+                "examples": [
+                  "ews",
+                  "collision",
+                  "transhipment",
+                  "anomaly",
+                  "dark",
+                  "geofence",
+                  "fishing"
+                ]
+              },
+              "domain": {
+                "type": "string",
+                "enum": ["safety", "surveillance"],
+                "description": "Analytics domain: safety or surveillance"
+              },
+              "severity": {
+                "type": "string",
+                "enum": ["info", "warning", "critical"],
+                "description": "Alert severity"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["open", "acknowledged", "resolved"],
+                "description": "Alert status"
+              },
+              "mmsi": {
+                "type": "integer",
+                "minimum": 100000000,
+                "maximum": 999999999,
+                "description": "Maritime Mobile Service Identity (9 digits)"
+              },
+              "relatedMmsi": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 100000000,
+                    "maximum": 999999999,
+                    "description": "Maritime Mobile Service Identity (9 digits)"
+                  },
+                  { "type": "null" }
+                ],
+                "description": "Second vessel involved (e.g. collision, transhipment)"
+              },
+              "title": { "type": "string", "minLength": 1 },
+              "message": { "type": "string" },
+              "lat": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90,
+                    "description": "WGS84 latitude in degrees"
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "lon": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "WGS84 longitude in degrees"
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "zoneId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "description": "UUID"
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "methodId": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+                "description": "Methodology catalog id of the rule that raised the alert (spec 17)"
+              },
+              "occurredAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+              },
+              "lastOccurredAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+                "description": "Latest merged occurrence"
+              },
+              "occurrences": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Occurrences merged into this alert (same dedupKey)"
+              },
+              "data": {
+                "type": "object",
+                "propertyNames": { "type": "string" },
+                "additionalProperties": {},
+                "description": "Detector specific details"
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "domain",
+              "severity",
+              "status",
+              "mmsi",
+              "relatedMmsi",
+              "title",
+              "message",
+              "lat",
+              "lon",
+              "zoneId",
+              "methodId",
+              "occurredAt",
+              "lastOccurredAt",
+              "occurrences",
+              "data"
+            ],
+            "description": "Alert (inbox view)"
+          }
+        },
+        "required": ["event", "rooms", "alert"],
+        "title": "RealtimeAlertFanout",
+        "description": "An alert:raised / alert:updated push fanned out to every notification instance over core NATS."
       }
     },
     "messages": {
@@ -3716,6 +4040,86 @@
           }
         ]
       },
+      "AlertResolvedV1": {
+        "name": "alert.resolved.v1",
+        "title": "AlertResolvedV1",
+        "summary": "The end of an alert occurrence, published by the detector that raised it on the same subject (after the alert cooldown; a re-raise within it cancels the resolution). Consumers resolve the unresolved inbox alert with the dedupKey unless it merged a later occurrence.",
+        "contentType": "application/json",
+        "headers": { "$ref": "#/components/schemas/NatsHeaders" },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "description": "Event id (UUID v7); also the Nats-Msg-Id header"
+            },
+            "type": {
+              "type": "string",
+              "const": "alert.resolved.v1",
+              "description": "Event type, e.g. \"ais.position.recorded.v1\""
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SERVICE_NAME of the producer"
+            },
+            "time": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+              "description": "When the event was produced"
+            },
+            "subject": {
+              "description": "Entity key: mmsi, vesselId, zoneId, …",
+              "type": "string",
+              "minLength": 1
+            },
+            "traceparent": {
+              "description": "W3C trace context of the producer",
+              "type": "string",
+              "pattern": "^[\\da-f]{2}-[\\da-f]{32}-[\\da-f]{16}-[\\da-f]{2}$"
+            },
+            "data": { "$ref": "#/components/schemas/AlertResolvedV1" }
+          },
+          "required": ["id", "type", "source", "time", "data"],
+          "title": "AlertResolvedV1 envelope"
+        },
+        "examples": [
+          {
+            "name": "example",
+            "headers": {
+              "Nats-Msg-Id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            },
+            "payload": {
+              "id": "01a1f8c2-54dc-7f00-8a00-000000000001",
+              "type": "alert.resolved.v1",
+              "source": "safety",
+              "time": "2026-11-20T08:30:01.000Z",
+              "subject": "525005223",
+              "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+              "data": {
+                "id": "01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5c",
+                "alertId": "01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5b",
+                "type": "ews",
+                "domain": "safety",
+                "severity": "critical",
+                "mmsi": 525005223,
+                "relatedMmsi": null,
+                "zoneId": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "dedupKey": "ews:525005223:01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "openedAt": "2026-11-20T08:31:00.000Z",
+                "resolvedAt": "2026-11-20T09:04:30.000Z",
+                "reason": "Under way 1.2 km from the pipeline",
+                "methodId": "ews.status",
+                "data": { "ewsStatus": 2, "pipelineDistanceM": 1204.7 }
+              }
+            }
+          }
+        ]
+      },
       "EmailRequestedV1": {
         "name": "notify.email.requested.v1",
         "title": "EmailRequestedV1",
@@ -3882,6 +4286,48 @@
           "type": "object",
           "description": "Device specific JSON; validated and normalized by the telemetry service."
         }
+      },
+      "RealtimeAlertFanout": {
+        "name": "realtime-alert-fanout",
+        "title": "Realtime alert fan-out",
+        "summary": "An alert:raised / alert:updated push for the given rooms (notification → every notification instance).",
+        "contentType": "application/json",
+        "payload": { "$ref": "#/components/schemas/RealtimeAlertFanout" },
+        "examples": [
+          {
+            "name": "example",
+            "payload": {
+              "event": "alert:updated",
+              "rooms": [
+                "authority",
+                "org:01a1f8c2-54d8-71c4-95cf-ab5eb8908e00"
+              ],
+              "alert": {
+                "id": "01a1f8c2-54db-7a10-8b21-0c9d8e7f6a5b",
+                "type": "ews",
+                "domain": "safety",
+                "severity": "critical",
+                "status": "open",
+                "mmsi": 525005223,
+                "relatedMmsi": null,
+                "title": "At anchor within 500 m of the pipeline",
+                "message": "KM Sinar Batam is predicted at anchor 312 m from the pipeline (KP 28.200).",
+                "lat": -6.8629,
+                "lon": 112.7166,
+                "zoneId": "01a1f8c2-54dc-7c3e-9a4b-2e6f8a1c3d5e",
+                "methodId": "ews.status",
+                "occurredAt": "2026-11-20T08:31:00.000Z",
+                "lastOccurredAt": "2026-11-20T08:41:00.000Z",
+                "occurrences": 3,
+                "data": {
+                  "ewsStatus": 0,
+                  "pipelineDistanceM": 312.4,
+                  "predictedNavstatus": 1
+                }
+              }
+            }
+          }
+        ]
       }
     }
   }

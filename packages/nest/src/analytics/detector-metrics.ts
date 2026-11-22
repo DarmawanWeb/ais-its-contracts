@@ -4,18 +4,28 @@ import { MetricsService } from '../metrics/metrics.service.js';
 
 /** Hooks of a detector, the `hook` label of `aisits_detector_errors_total`. */
 export type DetectorHook =
-  'onPosition' | 'onTick' | 'onZoneChanged' | 'onVesselChanged';
+  | 'onPosition'
+  | 'onTick'
+  | 'onZoneChanged'
+  | 'onVesselChanged'
+  | 'onActivated'
+  | 'onDeactivated';
 
 /** Outcomes of an incoming position (`aisits_detector_positions_total{outcome}`). */
 export type PositionOutcome = 'processed' | 'stale';
+
+/** Outcomes of an activation (`aisits_detector_activations_total{outcome}`). */
+export type ActivationOutcome = 'completed' | 'failed';
 
 /**
  * Detector metrics of spec §10: `aisits_detector_evaluations_total{detector}`,
  * `aisits_detector_alerts_total{detector,severity}` and
  * `aisits_detector_duration_seconds{detector}` (evaluations are `onPosition`
  * and `onTick` calls), plus `aisits_detector_errors_total{detector,hook}`
- * (thrown or timed out), `aisits_detector_skipped_total{detector,hook}` and
- * `aisits_detector_positions_total{outcome}`.
+ * (thrown or timed out), `aisits_detector_skipped_total{detector,hook}`,
+ * `aisits_detector_positions_total{outcome}`,
+ * `aisits_detector_alert_resolutions_total{detector}` and
+ * `aisits_detector_activations_total{outcome}`.
  */
 export class DetectorMetrics {
   readonly evaluations: Counter<'detector'>;
@@ -25,6 +35,10 @@ export class DetectorMetrics {
   /** Calls skipped because the detector's previous call for the vessel timed out and still runs. */
   readonly skipped: Counter<'detector' | 'hook'>;
   readonly positions: Counter<'outcome'>;
+  /** Occurrences resolved through `DetectorContext.alerts.resolve`, by detector. */
+  readonly resolutions: Counter<'detector'>;
+  /** Activations of this instance (its exclusive position consumer was pinned), by outcome. */
+  readonly activations: Counter<'outcome'>;
 
   constructor(metrics: MetricsService = new MetricsService()) {
     this.evaluations = metrics.counter({
@@ -55,6 +69,16 @@ export class DetectorMetrics {
     this.positions = metrics.counter({
       name: 'detector_positions_total',
       help: 'Positions received by the detector runner by outcome (processed, stale).',
+      labelNames: ['outcome'],
+    });
+    this.resolutions = metrics.counter({
+      name: 'detector_alert_resolutions_total',
+      help: 'Alert occurrences resolved by detector (announced with alert.resolved.v1 unless re-raised within the cooldown).',
+      labelNames: ['detector'],
+    });
+    this.activations = metrics.counter({
+      name: 'detector_activations_total',
+      help: 'Activations of this detector instance (exclusive position consumer pinned: alerts reloaded, onActivated called) by outcome (completed, failed).',
       labelNames: ['outcome'],
     });
   }

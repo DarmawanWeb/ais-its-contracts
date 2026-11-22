@@ -10,7 +10,11 @@ import {
   serverMaxDeliver,
 } from './consumer-config.js';
 import { decideFailure, retryDelayMs } from './delivery-policy.js';
-import { NonRetryableError, RetryableError } from './errors.js';
+import {
+  DeadLetterError,
+  NonRetryableError,
+  RetryableError,
+} from './errors.js';
 import { durableHandlerSettings } from './event-handler.decorator.js';
 import { headerValue, MAX_HEADER_VALUE_LENGTH } from './headers.js';
 import { streamConfig, streamDrift } from './stream-manager.js';
@@ -45,6 +49,21 @@ describe('delivery policy (spec §7.1)', () => {
     });
     expect(decideFailure(new NonRetryableError('never'), 3, policy)).toEqual({
       action: 'term',
+    });
+  });
+
+  it('dead-letters a DeadLetterError on any delivery, the first included', () => {
+    const policy = { maxDeliver: 10 };
+    const error = new DeadLetterError('value rejected by the store');
+    expect(error.name).toBe('DeadLetterError');
+    for (const deliveryCount of [1, 2, 10])
+      expect(decideFailure(error, deliveryCount, policy)).toEqual({
+        action: 'dead_letter',
+      });
+    // A subclass keeps the behaviour.
+    class ColumnTooLong extends DeadLetterError {}
+    expect(decideFailure(new ColumnTooLong('name'), 1, policy)).toEqual({
+      action: 'dead_letter',
     });
   });
 });

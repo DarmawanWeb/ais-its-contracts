@@ -32,6 +32,7 @@ describe('error codes', () => {
       'MFA_REQUIRED',
       'CII_NOT_AVAILABLE',
       'VESSEL_NOT_FOUND',
+      'PLATFORM_ADMIN_REQUIRED',
     ];
     for (const code of required) {
       expect(ERROR_CODES[code]).toBe(code);
@@ -94,6 +95,26 @@ describe('problem details (RFC 9457)', () => {
     expect(createProblem('CONFLICT', { title: 'MMSI taken' }).title).toBe(
       'MMSI taken',
     );
+  });
+
+  it('builds the problem of platform-admin-only routes', () => {
+    expect(ERROR_CODES.PLATFORM_ADMIN_REQUIRED).toBe('PLATFORM_ADMIN_REQUIRED');
+    expect(isErrorCode('PLATFORM_ADMIN_REQUIRED')).toBe(true);
+    expect(ERROR_DEFINITIONS.PLATFORM_ADMIN_REQUIRED).toEqual({
+      status: 403,
+      title: 'Platform administrator required',
+    });
+    const problem = createProblem('PLATFORM_ADMIN_REQUIRED', {
+      detail: 'Republishing vessels requires a platform administrator',
+    });
+    expect(problem).toEqual({
+      type: 'urn:ais-its:problem:platform-admin-required',
+      title: 'Platform administrator required',
+      status: 403,
+      detail: 'Republishing vessels requires a platform administrator',
+      code: 'PLATFORM_ADMIN_REQUIRED',
+    });
+    expect(ProblemDetailsSchema.parse(problem)).toEqual(problem);
   });
 
   it('keeps extension members and rejects malformed bodies', () => {

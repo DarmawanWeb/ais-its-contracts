@@ -6,7 +6,10 @@ import {
   CONSUMERS,
   consumersOfEvent,
   consumersOfService,
+  CORE_SUBSCRIPTION_DELIVERIES,
   CORE_SUBSCRIPTIONS,
+  coreSubscriptionDelivery,
+  DEFAULT_CORE_SUBSCRIPTION_DELIVERY,
   DEFAULT_MAX_DELIVER,
   ORDERED_CONSUMER_LIST,
 } from './consumers.js';
@@ -145,10 +148,51 @@ describe('CONSUMERS', () => {
     }
     expect(CORE_SUBSCRIPTIONS).toEqual([
       expect.objectContaining({
+        name: 'telemetry-mqtt',
         subject: 'aisits.telemetry.*',
         service: 'telemetry',
+        delivery: 'queue',
+      }),
+      expect.objectContaining({
+        name: 'notification-realtime-fanout',
+        subject: 'aisits.notification.realtime.v1',
+        service: 'notification',
+        delivery: 'fanout',
       }),
     ]);
+    for (const subscription of CORE_SUBSCRIPTIONS) {
+      expect(isServiceName(subscription.service)).toBe(true);
+      expect(streamForSubject(subscription.subject.replace('*', 'x'))).toBe(
+        undefined,
+      );
+    }
+  });
+
+  it('defaults core subscriptions to queue delivery', () => {
+    expect(DEFAULT_CORE_SUBSCRIPTION_DELIVERY).toBe('queue');
+    expect(CORE_SUBSCRIPTION_DELIVERIES).toEqual(['queue', 'fanout']);
+    expect(coreSubscriptionDelivery({ delivery: undefined })).toBe('queue');
+    expect(coreSubscriptionDelivery({})).toBe('queue');
+    expect(coreSubscriptionDelivery({ delivery: 'fanout' })).toBe('fanout');
+  });
+
+  it('delivers raised and resolved alerts through one durable consumer', () => {
+    for (const type of ['alert.raised.v1', 'alert.resolved.v1'] as const) {
+      expect(
+        consumersOfEvent(type).map((c) =>
+          'durableName' in c ? c.durableName : c.name,
+        ),
+      ).toEqual(['notification-alerts']);
+    }
+    expect(CONSUMERS['notification-alerts'].eventTypes).toEqual([
+      'alert.raised.v1',
+      'alert.resolved.v1',
+    ]);
+    expect(EVENT_CATALOG['alert.resolved.v1']).toMatchObject({
+      stream: 'ALERTS',
+      subject: EVENT_CATALOG['alert.raised.v1'].subject,
+      producers: ['safety', 'surveillance'],
+    });
   });
 
   it('feeds safety and surveillance with positions, zones and vessels only', () => {

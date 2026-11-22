@@ -200,6 +200,24 @@ describe('subjects and streams', () => {
     ).toBeUndefined();
   });
 
+  it('keeps the notification fan-out subject out of JetStream', () => {
+    expect(subjects.notificationRealtime()).toBe(
+      'aisits.notification.realtime.v1',
+    );
+    expect(SUBJECT_FILTERS.NOTIFICATION_REALTIME).toBe(
+      subjects.notificationRealtime(),
+    );
+    expect(streamForSubject(subjects.notificationRealtime())).toBeUndefined();
+  });
+
+  it('publishes raise and resolve of an occurrence on one ALERTS subject', () => {
+    for (const type of KNOWN_ALERT_TYPES) {
+      const subject = subjects.alert(type, 525005223);
+      expect(streamForSubject(subject)?.name, subject).toBe('ALERTS');
+      expect(subjectMatchesFilter(subject, SUBJECT_FILTERS.ALERT)).toBe(true);
+    }
+  });
+
   it('declares filters bound by the stream subjects', () => {
     expect(SUBJECT_FILTERS.AIS_RAW).toBe(STREAMS.AIS_RAW.subjects[0]);
     expect(SUBJECT_FILTERS.AIS_POSITION).toBe(STREAMS.AIS_POSITION.subjects[0]);
@@ -231,6 +249,7 @@ describe('subjectForEvent', () => {
       'safety.vessel_state.updated.v1': 'safety.state.v1.525005223',
       'emission.cii.updated.v1': 'emission.cii.v1.525005223',
       'alert.raised.v1': 'alert.v1.ews.525005223',
+      'alert.resolved.v1': 'alert.v1.ews.525005223',
       'notify.email.requested.v1': 'notify.email.v1',
       'audit.recorded.v1': 'audit.v1.fleet',
     };

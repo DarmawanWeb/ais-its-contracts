@@ -15,7 +15,11 @@ export {
 } from '../nats/consumer-config.js';
 export { NatsConsumerRuntime } from '../nats/consumer-runtime.js';
 export {
+  checkCorePayload,
+  contractsCorePayloadSchema,
+  type CorePayloadCheck,
   type CoreSubscriptionSettings,
+  coreSubscriptionQueue,
   coreSubscriptionSettings,
   getCoreSubscriptionSettings,
 } from '../nats/core-subscriptions.js';
@@ -27,7 +31,11 @@ export {
 } from '../nats/delivery-policy.js';
 export {
   type ConsumerRuntime,
+  type ConsumerState,
   DurableConsumerRunner,
+  type DurableConsumerRunnerOptions,
+  orderingWarning,
+  pullExpiresMsFor,
 } from '../nats/durable-consumer-runner.js';
 export {
   type DurableHandlerSettings,
@@ -47,14 +55,31 @@ export {
   type ReadDelivery,
 } from '../nats/message-processing.js';
 export {
+  envelopeMessageSize,
+  headerBlockBytes,
+  isMaxPayloadError,
+  jetStreamPublishHeaders,
+} from '../nats/message-size.js';
+export {
   OrderedConsumerRunner,
   type OrderedConsumerSpec,
   orderedSpecOf,
 } from '../nats/ordered-consumer.js';
 export {
+  OUTBOX_LAST_ERROR_MAX_LENGTH,
+  type OutboxClaimedRow,
+  type OutboxKeyRun,
+  type OutboxPlan,
+  outboxRetryDelayMs,
+  planOutboxRuns,
+  sanitizeOutboxError,
+} from '../nats/outbox-plan.js';
+export {
+  isNoStreamError,
   planStreamUpdate,
   streamConfig,
   streamDrift,
   type StreamDriftPlan,
+  type StreamEnsureOptions,
   streamUpdateConfig,
 } from '../nats/stream-manager.js';
