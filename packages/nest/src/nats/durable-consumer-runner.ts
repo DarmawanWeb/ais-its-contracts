@@ -62,6 +62,16 @@ const MIN_SAFE_PINNED_TTL_MS = 3000;
 /** Header with the pin id on the messages of an exclusive consumer. */
 const PIN_ID_HEADER = 'Nats-Pin-Id';
 
+/** Longest interval of the pin watchdog of an exclusive consumer, ms. */
+const MAX_WATCHDOG_INTERVAL_MS = 1000;
+
+/**
+ * Redelivery delay of a message an exclusive consumer returns unhandled
+ * because, when its turn came, this instance was not (or no longer) the
+ * confirmed active one, ms.
+ */
+export const RETURNED_MESSAGE_DELAY_MS = 1000;
+
 /**
  * A consumer that has neither received a message nor a server heartbeat for
  * this long, or whose recovery keeps failing for this long, reports itself
@@ -85,6 +95,46 @@ export function pullExpiresMsFor(
       MIN_PULL_EXPIRES_MS,
       Math.floor(settings.exclusive.pinnedTtlMs / 3),
     ),
+  );
+}
+
+/** Idle heartbeat interval of the pull requests of a durable consumer, ms (half the pull expiry, at least 500 ms). */
+export function idleHeartbeatMsFor(
+  settings: Pick<DurableHandlerSettings, 'exclusive'>,
+): number {
+  return Math.max(500, Math.floor(pullExpiresMsFor(settings) / 2));
+}
+
+/**
+ * How long an exclusive consumer instance may go without confirmed contact
+ * with the server before the server may have pinned another instance, ms
+ * (`undefined` for shared consumers): `max(2 × heartbeat, pinnedTtlMs −
+ * expires − heartbeat)` with `expires` = {@link pullExpiresMsFor} and
+ * `heartbeat` = {@link idleHeartbeatMsFor} — half the pinned TTL for TTLs of
+ * 3 to 90 s (15 s at the default 30 s).
+ *
+ * The server unpins an instance `pinnedTtlMs` after the last pull carrying
+ * its pin reached it. Every server message the instance receives (a
+ * message, an idle heartbeat, the expiry notice of a pull) belongs to a
+ * pull that is at most `expires` old, so the server cannot unpin the
+ * instance before `pinnedTtlMs − expires − d` after that contact, `d` being
+ * the transit time of the contact: deactivating after this bound is early
+ * enough while `d` stays below one heartbeat interval (the safety margin,
+ * 5 s at the default TTL). A healthy active instance hears from the server
+ * at least every heartbeat interval, so it gives its pin up only after
+ * missing about three heartbeats in a row. The same bound detects pauses of
+ * the process (SIGSTOP, a blocked event loop). Below a TTL of 3 000 ms the
+ * bound cannot be kept (the kit warns at start).
+ */
+export function pinContactTimeoutMsFor(
+  settings: Pick<DurableHandlerSettings, 'exclusive'>,
+): number | undefined {
+  if (settings.exclusive === undefined) return undefined;
+  const expires = pullExpiresMsFor(settings);
+  const heartbeat = idleHeartbeatMsFor(settings);
+  return Math.max(
+    2 * heartbeat,
+    settings.exclusive.pinnedTtlMs - expires - heartbeat,
   );
 }
 
@@ -149,20 +199,39 @@ export interface ConsumerHealth {
 /** Hooks of an exclusive {@link DurableConsumerRunner} (see `ExclusiveConsumerListener`). */
 export interface DurableConsumerRunnerOptions {
   /**
-   * Runs when this instance becomes the active one; dispatch of the
-   * message that revealed the pin and of every later one waits until it
-   * settles. A rejection naks those messages with backoff and the hook runs
-   * again on the next message.
+   * Runs when this instance becomes the active one — also again, for the
+   * same pin, when the server confirms the pin after a pause of the process
+   * (`previous === pinId`); dispatch of the message that revealed the pin
+   * and of every later one waits until it settles. A rejection naks those
+   * messages with backoff and the hook runs again on the next message.
    */
   readonly onActivated?:
     ((event: ExclusiveConsumerEvent) => void | Promise<void>) | undefined;
   /**
-   * Runs when another instance took over (after the handlers of the ended
-   * period settled) and on a graceful stop (before the pin is released).
-   * Errors are logged and ignored.
+   * Runs when another instance took over, when this instance gave its pin up
+   * (`contact_lost`, `paused`) — after the handlers of the ended period
+   * settled — and on a graceful stop (before the pin is released). Errors
+   * are logged and ignored.
    */
   readonly onDeactivated?:
     ((event: ExclusiveConsumerEvent) => void | Promise<void>) | undefined;
+  /**
+   * Called synchronously whenever {@link DurableConsumerRunner.state}
+   * changes, before any hook runs: e.g. to stop the timers of the active
+   * instance at once (`onDeactivated` waits for the handlers of the ended
+   * period). Errors are logged and ignored.
+   */
+  readonly onStateChange?: ((state: ConsumerState) => void) | undefined;
+  /** Monotonic clock, ms (tests). Default `performance.now()`. */
+  readonly clock?: (() => number) | undefined;
+}
+
+/** What a received message of an exclusive consumer may be dispatched under. */
+interface DispatchTicket {
+  /** Its `Nats-Pin-Id`. */
+  readonly pinId: string;
+  /** The runner's epoch when it arrived. */
+  readonly epoch: number;
 }
 
 /** The `pinned_client_id` of `group` in a consumer info (NATS ≥ 2.11). */
@@ -196,7 +265,16 @@ function pinnedClientId(info: unknown, group: string): string | undefined {
  * from the messages' `Nats-Pin-Id`: a new pin activates the instance
  * (`onActivated` gates dispatch), losing it re-subscribes at once as a
  * standby (`onDeactivated`), and a graceful stop releases the pin so a
- * standby takes over without waiting for the pinned TTL.
+ * standby takes over without waiting for the pinned TTL. A message is
+ * dispatched only while this instance is the confirmed active one for its
+ * pin, in the period it arrived in; otherwise it is returned for
+ * redelivery (`nak`, outcome `returned`). Two situations make an active
+ * instance give its pin up although no unpin notice arrived (bound:
+ * {@link pinContactTimeoutMsFor}): no confirmed contact with the server for
+ * that long (cut off from NATS: `contact_lost`, it subscribes afresh and is
+ * activated again only by a new pin), and a pause of the process that long
+ * (`paused`: what it buffered is returned, and the server is asked whether
+ * it still pins this instance before it activates again).
  */
 export class DurableConsumerRunner {
   private readonly logger: Logger;
@@ -204,11 +282,29 @@ export class DurableConsumerRunner {
   private readonly inFlight = new Set<Promise<void>>();
   private readonly slots: Semaphore;
   private readonly queue = new KeyedSerialQueue();
+  private readonly clock: () => number;
+  /** {@link pinContactTimeoutMsFor}; `undefined` for shared consumers. */
+  private readonly contactTimeoutMs: number | undefined;
   private messages: ConsumerMessages | undefined;
   private supervisor: Promise<void> | undefined;
   private recovering: Promise<void> | undefined;
   private stopping = false;
   private currentState: ConsumerState;
+  /** Last time this runner's code ran (monotonic ms); a longer silence is a pause of the process. */
+  private lastRunAt: number;
+  /** Last confirmed contact with the server (monotonic ms). */
+  private lastContactAt: number | undefined;
+  /** Changes with every role change: a message is dispatched only in the period it arrived in. */
+  private epoch = 0;
+  /** After a pause: nothing activates until the server confirmed the pin. */
+  private confirming = false;
+  /** Identifies the current pin check (a newer pause or an unpin supersedes it). */
+  private checkGeneration = 0;
+  /** Latest pin id seen on a message while confirming. */
+  private seenPinId: string | undefined;
+  /** A pin given up after a contact loss: released once the server answers, if it still holds it. */
+  private abandonedPinId: string | undefined;
+  private watchdog: NodeJS.Timeout | undefined;
   /** Last `Nats-Pin-Id` seen on a message (exclusive consumers). */
   private pinId: string | undefined;
   /** Pin id of the period that ended last: its late messages never re-activate. */
@@ -239,6 +335,9 @@ export class DurableConsumerRunner {
     this.slots = new Semaphore(settings.concurrency);
     this.currentState =
       settings.exclusive === undefined ? 'shared' : 'starting';
+    this.clock = options.clock ?? (() => performance.now());
+    this.contactTimeoutMs = pinContactTimeoutMsFor(settings);
+    this.lastRunAt = this.clock();
   }
 
   /** Durable consumer name. */
@@ -269,12 +368,18 @@ export class DurableConsumerRunner {
     await this.runtime.streams.ensure([definition.stream, 'DLQ'], 'consumer');
     await this.ensureConsumer();
     this.messages = await this.subscribe();
+    this.lastRunAt = this.clock();
     this.supervisor = this.supervise(this.messages);
     this.runtime.running?.add(this);
+    this.startWatchdog();
     this.logger.log(
       `Consuming ${definition.stream} ${definition.filterSubjects.join(',')} with ${this.handlerName} ` +
         `(concurrency ${this.settings.concurrency}, maxDeliver ${this.settings.maxDeliver}` +
-        `${exclusive === undefined ? '' : `, exclusive, pinned TTL ${exclusive.pinnedTtlMs} ms`})`,
+        `${
+          exclusive === undefined
+            ? ''
+            : `, exclusive, pinned TTL ${exclusive.pinnedTtlMs} ms, pin given up after ${this.contactTimeoutMs} ms without server contact`
+        })`,
     );
   }
 
@@ -287,6 +392,8 @@ export class DurableConsumerRunner {
   async stop(timeoutMs: number): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
+    clearInterval(this.watchdog);
+    this.checkGeneration += 1;
     this.runtime.running?.delete(this);
     await this.messages?.close().catch(() => undefined);
     const settled = Promise.allSettled([...this.inFlight]).then(
@@ -368,11 +475,10 @@ export class DurableConsumerRunner {
     const { jetstream } = await this.runtime.client.ready();
     const { stream, durableName } = this.settings.definition;
     const consumer = await jetstream.consumers.get(stream, durableName);
-    const expires = pullExpiresMsFor(this.settings);
     const messages = await consumer.consume({
       max_messages: this.settings.maxAckPending,
-      expires,
-      idle_heartbeat: Math.max(500, Math.floor(expires / 2)),
+      expires: pullExpiresMsFor(this.settings),
+      idle_heartbeat: idleHeartbeatMsFor(this.settings),
       ...(this.settings.exclusive === undefined
         ? {}
         : { group: this.settings.exclusive.group }),
@@ -388,6 +494,16 @@ export class DurableConsumerRunner {
       for await (const status of messages.status()) {
         if (status.type === 'heartbeat' || status.type === 'next') {
           this.touch();
+          // `next` is this client's own pull: no news from the server.
+          if (status.type === 'heartbeat') this.serverContact();
+        } else if (
+          status.type === 'discard' ||
+          status.type === 'debug' ||
+          status.type === 'exceeded_limits' ||
+          status.type === 'flow_control'
+        ) {
+          // Status replies of the server to this consumer's pulls (e.g. 408 expiry).
+          this.serverContact();
         } else if (
           status.type === 'consumer_deleted' ||
           status.type === 'consumer_not_found' ||
@@ -401,9 +517,11 @@ export class DurableConsumerRunner {
           );
         } else if (status.type === 'consumer_pinned') {
           this.touch();
+          this.serverContact();
           if (this.settings.exclusive !== undefined) this.observePin(status.id);
         } else if (status.type === 'consumer_unpinned') {
           this.touch();
+          this.noteRun();
           this.onUnpinned(messages);
         }
         // Other notifications (flow control, discards, debug) need no action.
@@ -421,16 +539,24 @@ export class DurableConsumerRunner {
   private onUnpinned(messages: ConsumerMessages): void {
     if (this.currentState !== 'standby')
       this.logger.log('Another instance is active: standing by');
+    // The server said so: a pin check after a pause is moot.
+    this.checkGeneration += 1;
+    this.confirming = false;
+    this.seenPinId = undefined;
     void this.deactivate('unpinned');
-    this.currentState = 'standby';
+    this.setState('standby');
     if (this.isStopping()) return;
     this.closedBecause = 'unpinned';
     void messages.close().catch(() => undefined);
   }
 
-  /** Notes the pin of a message: a new pin activates this instance. */
+  /** Notes the pin of a message: a new pin activates this instance (after a pause: once confirmed). */
   private observePin(pinId: string): void {
     if (pinId === '' || pinId === this.lostPinId) return;
+    if (this.confirming) {
+      this.seenPinId = pinId;
+      return;
+    }
     if (
       pinId === this.pinId &&
       this.currentState === 'active' &&
@@ -438,6 +564,187 @@ export class DurableConsumerRunner {
     )
       return;
     this.activate(pinId);
+  }
+
+  /** Changes the role; `onStateChange` hears of it before any hook runs. */
+  private setState(state: ConsumerState): void {
+    if (this.currentState === state) return;
+    this.currentState = state;
+    try {
+      this.options.onStateChange?.(state);
+    } catch (error) {
+      this.logger.warn(`State listener failed: ${errorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Notes that this runner's code runs now. A silence longer than the pin
+   * bound means the process did not run (SIGSTOP, a blocked event loop):
+   * what arrives now may have waited in buffers since before the pin could
+   * have moved, so {@link onPaused} runs before it is looked at.
+   */
+  private noteRun(): void {
+    const bound = this.contactTimeoutMs;
+    if (bound === undefined) return;
+    const now = this.clock();
+    const silence = now - this.lastRunAt;
+    this.lastRunAt = now;
+    if (silence > bound) this.onPaused(Math.round(silence));
+  }
+
+  /** A message, heartbeat or status reply of the server arrived (exclusive consumers). */
+  private serverContact(): void {
+    if (this.contactTimeoutMs === undefined) return;
+    this.noteRun();
+    this.lastContactAt = this.clock();
+  }
+
+  /**
+   * Watches the pin of an exclusive consumer: detects pauses of the process
+   * between messages and, on an active instance, the loss of contact with
+   * the server (see {@link pinContactTimeoutMsFor}).
+   */
+  private startWatchdog(): void {
+    const bound = this.contactTimeoutMs;
+    if (bound === undefined) return;
+    const interval = Math.max(
+      50,
+      Math.min(MAX_WATCHDOG_INTERVAL_MS, Math.floor(bound / 4)),
+    );
+    this.watchdog = setInterval(() => {
+      this.noteRun();
+      // I/O that waited while timers lagged (messages, heartbeats) goes first.
+      setImmediate(() => {
+        this.checkContact();
+      });
+    }, interval);
+    this.watchdog.unref();
+  }
+
+  private checkContact(): void {
+    const bound = this.contactTimeoutMs;
+    if (
+      bound === undefined ||
+      this.isStopping() ||
+      this.confirming ||
+      this.currentState !== 'active'
+    )
+      return;
+    const silence = this.clock() - (this.lastContactAt ?? this.lastRunAt);
+    if (silence > bound) this.onContactLost(Math.round(silence));
+  }
+
+  /**
+   * No confirmed contact with the server for longer than the pin bound
+   * while active (cut off from NATS): the server may pin another instance
+   * from now on. This instance deactivates (`contact_lost`), stops pulling
+   * with its pin and subscribes afresh, so it becomes active again only
+   * through a new pin; the old pin is released once the server answers, if
+   * it still holds it.
+   */
+  private onContactLost(silenceMs: number): void {
+    this.logger.warn(
+      `No contact with the NATS server for ${silenceMs} ms (bound ${this.contactTimeoutMs} ms): another instance ` +
+        'may be pinned now; deactivating and subscribing afresh as a standby',
+    );
+    this.abandonedPinId = this.pinId;
+    void this.deactivate('contact_lost');
+    this.abandonSubscription('contact lost');
+  }
+
+  /**
+   * The process did not run for longer than the pin bound (SIGSTOP, a
+   * blocked event loop): the server may have moved the pin meanwhile, and
+   * what was buffered (messages under the old pin, heartbeats) proves
+   * nothing. An active instance deactivates (`paused`); messages that
+   * arrived before and until the pin is confirmed are returned for
+   * redelivery; then the server is asked which instance it pins. If it is
+   * this one (its pin, or a new pin seen since), it activates again — its
+   * activation hook reloads the state before any message is dispatched —,
+   * otherwise it subscribes afresh as a standby.
+   */
+  private onPaused(silenceMs: number): void {
+    if (this.isStopping()) return;
+    this.epoch += 1;
+    const active = this.currentState === 'active';
+    const activePin = active ? this.pinId : undefined;
+    this.logger.warn(
+      `This process did not run for ${silenceMs} ms (paused or blocked event loop; bound ${this.contactTimeoutMs} ms): ` +
+        `messages received so far are returned for redelivery${active ? ', deactivating' : ''} until the server confirms the pin`,
+    );
+    this.confirming = true;
+    this.seenPinId = undefined;
+    this.checkGeneration += 1;
+    if (active) void this.deactivate('paused');
+    void this.checkPin(this.checkGeneration, activePin);
+  }
+
+  /** After a pause: activates again if the server still (or newly) pins this instance. */
+  private async checkPin(
+    generation: number,
+    activePin: string | undefined,
+  ): Promise<void> {
+    const { exclusive, definition } = this.settings;
+    if (exclusive === undefined) return;
+    let pinned: string | undefined;
+    let answered = true;
+    try {
+      const { manager } = await this.runtime.client.ready();
+      const info = await manager.consumers.info(
+        definition.stream,
+        definition.durableName,
+      );
+      pinned = pinnedClientId(info, exclusive.group);
+    } catch (error) {
+      answered = false;
+      this.logger.warn(
+        `Checking the pin after the pause failed: ${errorMessage(error)}`,
+      );
+    }
+    // The messages that arrived together with the answer are looked at first.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (this.isStopping() || generation !== this.checkGeneration) return;
+    this.confirming = false;
+    const candidate = this.seenPinId ?? activePin;
+    this.seenPinId = undefined;
+    if (answered && candidate !== undefined && pinned === candidate) {
+      this.logger.log(
+        `The server still pins this instance (pin ${candidate}): activating again`,
+      );
+      if (this.lostPinId === candidate) this.lostPinId = undefined;
+      this.activate(candidate);
+      return;
+    }
+    // Nothing was pinned here (a standby that saw no pin): nothing to give up.
+    if (candidate === undefined) return;
+    this.lostPinId = candidate;
+    this.logger.log(
+      answered
+        ? `The server pins ${pinned === undefined ? 'no instance' : 'another instance'} now: subscribing afresh as a standby`
+        : 'The pin could not be confirmed: subscribing afresh as a standby',
+    );
+    this.abandonSubscription('paused');
+  }
+
+  /** Closes the consume loop so that `supervise()` subscribes afresh (no stale pin id in the pulls). */
+  private abandonSubscription(reason: string): void {
+    if (this.isStopping()) return;
+    this.closedBecause = reason;
+    void this.messages?.close().catch(() => undefined);
+  }
+
+  /**
+   * `true` while a message that arrived with `ticket` may be dispatched:
+   * this instance is the confirmed active one for its pin, in the period it
+   * arrived in.
+   */
+  private mayDispatch(ticket: DispatchTicket): boolean {
+    return (
+      !this.confirming &&
+      this.currentState === 'active' &&
+      ticket.epoch === this.epoch &&
+      ticket.pinId === this.pinId
+    );
   }
 
   /**
@@ -451,9 +758,11 @@ export class DurableConsumerRunner {
       this.activationPrevious = this.pinId;
       this.pinId = pinId;
       this.lostPinId = undefined;
+      this.epoch += 1;
+      this.lastContactAt = this.clock();
       if (this.currentState !== 'active')
         this.logger.log('Became the active instance of the consumer');
-      this.currentState = 'active';
+      this.setState('active');
       this.runtime.metrics.consumerActivations.inc({ consumer: this.name });
     }
     this.activationFailed = false;
@@ -484,14 +793,17 @@ export class DurableConsumerRunner {
 
   /**
    * Ends the active period of this instance: `onDeactivated` runs after the
-   * handlers of the period (`unpinned`) or of the stop settled. No-op when
-   * this instance is not active.
+   * handlers of the period (or of the stop) settled; messages of the period
+   * not dispatched yet are returned. No-op when this instance is not active.
    */
-  private deactivate(reason: 'unpinned' | 'stopped'): Promise<void> {
+  private deactivate(
+    reason: Exclude<ExclusiveConsumerTransition, 'pinned'>,
+  ): Promise<void> {
     if (this.currentState !== 'active') return Promise.resolve();
     const pinId = this.pinId;
     this.lostPinId = pinId;
-    this.currentState = 'standby';
+    this.epoch += 1;
+    this.setState('standby');
     this.activation = undefined;
     this.activationFailed = false;
     const hook = this.options.onDeactivated;
@@ -542,9 +854,9 @@ export class DurableConsumerRunner {
    * standby is pinned at once; a stale instance never unpins the active
    * one. Failures (NATS < 2.11, connection lost) are ignored.
    */
-  private async releasePin(): Promise<void> {
+  private async releasePin(pinId = this.pinId): Promise<boolean> {
     const { exclusive, definition } = this.settings;
-    if (exclusive === undefined || this.pinId === undefined) return;
+    if (exclusive === undefined || pinId === undefined) return true;
     try {
       const { manager } = await this.runtime.client.ready();
       const info = await manager.consumers.info(
@@ -552,11 +864,11 @@ export class DurableConsumerRunner {
         definition.durableName,
       );
       const pinned = pinnedClientId(info, exclusive.group);
-      if (pinned !== this.pinId) {
+      if (pinned !== pinId) {
         this.logger.debug(
           `Not releasing the pin: held by ${pinned ?? 'no instance'}, not this one`,
         );
-        return;
+        return true;
       }
       await manager.consumers.unpin(
         definition.stream,
@@ -564,10 +876,12 @@ export class DurableConsumerRunner {
         exclusive.group,
       );
       this.logger.log('Released the pin: a standby takes over now');
+      return true;
     } catch (error) {
       this.logger.debug(
         `Releasing the pin failed (ignored): ${errorMessage(error)}`,
       );
+      return false;
     }
   }
 
@@ -638,6 +952,12 @@ export class DurableConsumerRunner {
       const reason = this.closedBecause;
       this.closedBecause = undefined;
       try {
+        // A pin given up after a contact loss: let the server pin anew at once.
+        if (
+          this.abandonedPinId !== undefined &&
+          (await this.releasePin(this.abandonedPinId))
+        )
+          this.abandonedPinId = undefined;
         await this.ensureConsumer();
         messages = await this.subscribe();
         this.messages = messages;
@@ -657,7 +977,9 @@ export class DurableConsumerRunner {
    * Drains the client buffer eagerly: each message is heartbeated from its
    * arrival and waits in the process (bounded by `max_ack_pending`) for its
    * subject's turn and a handler slot. A message of an exclusive consumer
-   * also waits for the activation hook of its pin.
+   * also waits for the activation hook of its pin, and is returned instead
+   * of dispatched when this instance is no longer the confirmed active one
+   * for it by then.
    */
   private async consume(messages: ConsumerMessages): Promise<void> {
     const ordered =
@@ -669,9 +991,14 @@ export class DurableConsumerRunner {
         message.nak();
         continue;
       }
+      let ticket: DispatchTicket | undefined;
       if (exclusive) {
-        const pinId = message.headers?.get(PIN_ID_HEADER);
-        if (pinId !== undefined) this.observePin(pinId);
+        this.serverContact();
+        const pinId = message.headers?.get(PIN_ID_HEADER) ?? '';
+        if (pinId !== '') {
+          this.observePin(pinId);
+          ticket = { pinId, epoch: this.epoch };
+        }
       }
       const gate = this.activation;
       const heartbeat = this.startHeartbeat(message);
@@ -679,7 +1006,7 @@ export class DurableConsumerRunner {
         await this.slots.acquire();
         try {
           if (this.isStopping()) message.nak();
-          else await this.handle(message, gate);
+          else await this.handle(message, gate, ticket);
         } finally {
           this.slots.release();
           clearInterval(heartbeat);
@@ -706,17 +1033,29 @@ export class DurableConsumerRunner {
   private async handle(
     message: JsMsg,
     gate: Promise<void> | undefined,
+    ticket: DispatchTicket | undefined,
   ): Promise<void> {
     const { definition } = this.settings;
     const labels = {
       stream: definition.stream,
       consumer: definition.durableName,
     };
+    if (ticket !== undefined && !this.mayDispatch(ticket)) {
+      const outcome = await this.returnMessage(message);
+      this.runtime.metrics.consumed.inc({ ...labels, outcome });
+      return;
+    }
     if (gate !== undefined) {
       try {
         await gate;
       } catch (error) {
         const outcome = await this.settleGateFailure(message, error);
+        this.runtime.metrics.consumed.inc({ ...labels, outcome });
+        return;
+      }
+      // The role may have changed while the activation hook ran.
+      if (ticket !== undefined && !this.mayDispatch(ticket)) {
+        const outcome = await this.returnMessage(message);
         this.runtime.metrics.consumed.inc({ ...labels, outcome });
         return;
       }
@@ -781,6 +1120,43 @@ export class DurableConsumerRunner {
     }
     message.ack();
     return 'ack';
+  }
+
+  /**
+   * Returns a message of an exclusive consumer unhandled: this instance was
+   * not the confirmed active one for it when its turn came (another
+   * instance took over, the pin was given up, or a pause left it
+   * unconfirmed). `nak` after {@link RETURNED_MESSAGE_DELAY_MS}, outcome
+   * `returned` (not a handler failure); on its last delivery, where the
+   * server would drop a nak'd message, it is dead-lettered instead.
+   */
+  private async returnMessage(message: JsMsg): Promise<ConsumeOutcome> {
+    const deliveryCount = message.info.deliveryCount;
+    if (deliveryCount >= this.settings.maxDeliver) {
+      const reason =
+        'returned unhandled on its last delivery: this instance was not the confirmed active one';
+      try {
+        await this.deadLetter(message, new Error(reason));
+        message.ack();
+        this.logger.error(
+          `Dead-lettered message ${message.seq} on ${message.subject} (delivery ${deliveryCount}/${this.settings.maxDeliver}): ${reason}`,
+        );
+        return 'dead_letter';
+      } catch (error) {
+        this.logger.error(
+          `Dead-lettering returned message ${message.seq} failed: ${errorMessage(error)}`,
+        );
+      }
+    }
+    this.logger.debug(
+      `Returning message ${message.seq} on ${message.subject} for redelivery: not the confirmed active instance`,
+    );
+    try {
+      message.nak(RETURNED_MESSAGE_DELAY_MS);
+    } catch {
+      // Connection lost: the server redelivers after ack_wait.
+    }
+    return 'returned';
   }
 
   /**
