@@ -5,7 +5,8 @@ import {
   type AlertResolvedV1,
   AlertResolvedV1Schema,
 } from '@darmawanweb/ais-its-contracts/events';
-import { describe, expect, it } from 'vitest';
+import { Logger } from '@nestjs/common';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   AlertEmitter,
@@ -15,6 +16,7 @@ import {
   AlertSignalError,
   type AlertUpdate,
   type OpenAlert,
+  type PublishedResolution,
 } from './alert-emitter.js';
 
 const ZONE = '018f2b5e-0000-7000-8000-00000000000a';
@@ -767,5 +769,191 @@ describe('AlertEmitter event times (occurredAt)', () => {
       `${KEY}@00:02:06`,
       `${KEY}@00:03:11`,
     ]);
+  });
+});
+
+describe('AlertEmitter unannounced resolutions (crash within the cooldown, K6)', () => {
+  /** An events table as a detector service keeps it: resolution event id and announcement mark. */
+  function eventsTable() {
+    const rows = new Map<
+      string,
+      {
+        alert: OpenAlert;
+        resolvedAt?: Date;
+        reason?: string;
+        data?: Readonly<Record<string, unknown>>;
+        eventId?: string | undefined;
+        announced: boolean;
+      }
+    >();
+    const marked: PublishedResolution[] = [];
+    const persistence: AlertPersistence = {
+      onRaised: (alert) => {
+        rows.set(alert.id, {
+          alert: {
+            ...restoredAlert(),
+            alertId: alert.id,
+            dedupKey: alert.dedupKey,
+            domain: alert.domain,
+            methodId: alert.methodId,
+            openedAt: new Date(alert.occurredAt),
+            publishedAt: new Date(alert.occurredAt),
+          },
+          announced: false,
+        });
+        return Promise.resolve();
+      },
+      onResolved: (resolution) => {
+        const row = rows.get(resolution.alert.alertId);
+        if (row !== undefined)
+          Object.assign(row, {
+            alert: resolution.alert,
+            resolvedAt: resolution.resolvedAt,
+            reason: resolution.reason,
+            data: resolution.data,
+            eventId: resolution.eventId,
+          });
+        return Promise.resolve();
+      },
+      onUpdated: (update) => {
+        // A suppressed reopen makes the row open again.
+        const row = rows.get(update.alert.alertId);
+        if (row !== undefined && update.reopened) {
+          delete row.resolvedAt;
+          row.eventId = undefined;
+        }
+        return Promise.resolve();
+      },
+      onResolutionPublished: (resolution) => {
+        marked.push(resolution);
+        for (const row of rows.values())
+          if (row.eventId === resolution.eventId) row.announced = true;
+        return Promise.resolve();
+      },
+      loadUnannounced: () =>
+        Promise.resolve(
+          [...rows.values()].flatMap((row) =>
+            row.resolvedAt !== undefined &&
+            row.eventId !== undefined &&
+            !row.announced
+              ? [
+                  {
+                    alert: row.alert,
+                    resolvedAt: row.resolvedAt,
+                    reason: row.reason,
+                    data: row.data,
+                    eventId: row.eventId,
+                  },
+                ]
+              : [],
+          ),
+        ),
+    };
+    return { rows, marked, persistence };
+  }
+
+  it('announces a resolution lost by a crash after the cooldown, with its event id, and marks it', async () => {
+    const table = eventsTable();
+    const before = setupEvents({ persistence: table.persistence });
+    await before.emitter.raise('safety', ews('warning'));
+    before.advance(MINUTE);
+    await before.emitter.resolve(KEY, { reason: 'left the zone' });
+    expect(before.emitter.pendingResolutionCount).toBe(1);
+    // The process crashes: the pending event is gone with it.
+    const pending = await table.persistence.loadUnannounced?.();
+    expect(pending).toHaveLength(1);
+    const eventId = pending?.[0]?.eventId;
+
+    const after = setupEvents({ persistence: table.persistence });
+    after.advance(2 * MINUTE); // 3 minutes after the raise
+    expect(
+      await after.emitter.restoreUnannounced(
+        (await table.persistence.loadUnannounced?.()) ?? [],
+      ),
+    ).toBe(1);
+    // Still within the cooldown: it waits, as it would have.
+    expect(await after.emitter.retryPending()).toMatchObject({
+      resolutionsPublished: 0,
+      resolutionsWaiting: 1,
+    });
+    after.advance(8 * MINUTE);
+    expect(await after.emitter.retryPending()).toMatchObject({
+      resolutionsPublished: 1,
+    });
+    expect(after.resolved).toMatchObject([
+      { id: eventId, dedupKey: KEY, reason: 'left the zone' },
+    ]);
+    expect(table.marked).toEqual([
+      { dedupKey: KEY, alertId: pending?.[0]?.alert.alertId, eventId },
+    ]);
+    expect(await table.persistence.loadUnannounced?.()).toEqual([]);
+  });
+
+  it('marks resolutions published without a crash, and cancels a restored one on a re-raise within the cooldown', async () => {
+    const table = eventsTable();
+    const { emitter, advance } = setupEvents({
+      persistence: table.persistence,
+    });
+    await emitter.raise('safety', ews('warning'));
+    advance(10 * MINUTE);
+    await emitter.resolve(KEY);
+    expect(table.marked).toHaveLength(1);
+    expect(await table.persistence.loadUnannounced?.()).toEqual([]);
+
+    // Raised again, resolved within the cooldown, then a crash.
+    advance(MINUTE);
+    await emitter.raise('safety', ews('warning'));
+    advance(MINUTE);
+    await emitter.resolve(KEY);
+    const after = setupEvents({ persistence: table.persistence });
+    after.advance(12 * MINUTE);
+    await after.emitter.restoreUnannounced(
+      (await table.persistence.loadUnannounced?.()) ?? [],
+    );
+    // The key signals again within the cooldown: the occurrence reopens.
+    expect(await after.emitter.raise('safety', ews('warning'))).toBe(
+      'suppressed',
+    );
+    expect(after.emitter.pendingResolutionCount).toBe(0);
+    after.advance(20 * MINUTE);
+    await after.emitter.flush();
+    expect(after.resolved).toEqual([]);
+    expect(await table.persistence.loadUnannounced?.()).toEqual([]);
+  });
+
+  it('skips resolutions outside the filter, of occurrences open again, or without publishResolution', async () => {
+    const table = eventsTable();
+    const before = setupEvents({ persistence: table.persistence });
+    await before.emitter.raise('safety', ews('warning'));
+    await before.emitter.resolve(KEY);
+    const lost = (await table.persistence.loadUnannounced?.()) ?? [];
+    const after = setupEvents();
+    expect(
+      await after.emitter.restoreUnannounced(lost, { filter: () => false }),
+    ).toBe(0);
+    after.emitter.restore([lost[0]?.alert ?? restoredAlert()]);
+    expect(await after.emitter.restoreUnannounced(lost)).toBe(0);
+    const silent = new AlertEmitter({ publish: () => Promise.resolve() });
+    expect(await silent.restoreUnannounced(lost)).toBe(0);
+  });
+
+  it('logs and ignores a failing announcement mark', async () => {
+    const warn = vi
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const { emitter, resolved, advance } = setupEvents({
+      persistence: {
+        onResolutionPublished: () => Promise.reject(new Error('db down')),
+      },
+    });
+    await emitter.raise('safety', ews('warning'));
+    advance(10 * MINUTE);
+    await emitter.resolve(KEY);
+    expect(resolved).toHaveLength(1);
+    expect(emitter.pendingResolutionCount).toBe(0);
+    expect(String(warn.mock.calls.at(-1)?.[0])).toMatch(
+      /announced failed \(it may be announced again\): db down/,
+    );
+    warn.mockRestore();
   });
 });

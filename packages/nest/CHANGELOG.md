@@ -6,6 +6,78 @@ All notable changes to this package are documented in this file. The format foll
 
 ## [Unreleased]
 
+Follow-ups reported by the services during their 0.2.0 upgrades (K1–K7 of the kit patch). Every
+change is backward compatible at the source level (new options, new exports, additive union
+members); the behaviour changes are listed under _Changed_ and step by step in
+[UPGRADING.md](UPGRADING.md#upgrading-from-030-to-the-next-release). Needs the contracts release
+of the same patch (optional `labels` of `audit.recorded.v1`).
+
+### Added
+
+- **Exclusive consumers give their pin up when the server may have moved it (K1, K2).**
+  `pinContactTimeoutMs(pinnedTtlMs?)` (`./nats`; `pinContactTimeoutMsFor(settings)` and
+  `idleHeartbeatMsFor(settings)` in `./internal`): `max(2 × heartbeat, pinnedTtlMs − expiry −
+heartbeat)`, half the TTL from 3 to 90 s (15 s at the default 30 s). An active instance without
+  confirmed contact with the server for that long (cut off from NATS) deactivates with the new
+  reason `contact_lost` and subscribes afresh, so it is active again only through a new pin; a
+  process that did not run for that long (`SIGSTOP`, a blocked event loop; monotonic clock checked
+  before every dispatch, on every server contact, by a watchdog and when `state` is read)
+  deactivates with `paused`, returns what it buffered and asks the server whether it still pins
+  it before activating again (activation hooks first, `previous === pinId` for the same pin).
+  `ExclusiveConsumerTransition` gains `'contact_lost' | 'paused'`; `ConsumeOutcome` gains
+  `'returned'` (`aisits_events_consumed_total{outcome="returned"}`: not dispatched because this
+  instance was not the confirmed active one, `nak` after `RETURNED_MESSAGE_DELAY_MS` = 1 s,
+  dead-lettered on the last delivery); `DurableConsumerRunnerOptions.onStateChange` (synchronous,
+  before any hook) and `clock` (tests).
+- **Detector SDK: resolutions a crash would lose (K6).** Optional `AlertPersistence.loadUnannounced()`
+  and `onResolutionPublished({ dedupKey, alertId, eventId })` (`UnannouncedResolution`,
+  `PublishedResolution`); `AlertEmitter.restoreUnannounced(resolutions, { filter })`
+  (`AlertRestoreUnannouncedOptions`), `DetectorEngine.restoreUnannounced(load)`,
+  `DetectorActivationOptions.loadUnannounced`, `DetectorActivation.unannounced`. The runner queues
+  the resolutions recorded with an event id but never confirmed published on every activation (at
+  startup without an exclusive consumer), with their event id, after the rest of their cooldown.
+- **Bounded NATS drain (K3).** `NatsModuleOptions.connectionDrainTimeoutMs` (default
+  `DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS` = 5 s), also bounded by what is left of
+  `SHUTDOWN_TIMEOUT_MS` less 1 s.
+- `withTransaction(…, { onRetry })` with `TransactionRetry` (`retry`, `retries`, `sqlState`,
+  `delayMs`, `error`), called for every re-run after the rollback (K7).
+- `AuditEntry.labels` (contracts `AuditLabels`): names known when the record is written, sent as
+  `audit.recorded.v1` `labels`, each cut to `AUDIT_LABEL_MAX_LENGTH` (K5).
+- `./http`: `PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION`, `platformAdminDescriptionOf(operation)`,
+  `API_KEY_SCOPES_EXTENSION` (`x-api-key-scopes`) (K4).
+
+### Changed
+
+- **Exclusive consumers**: a message of an exclusive consumer is dispatched only while this
+  instance is the confirmed active one for its pin, in the period it arrived in; otherwise it is
+  returned (above). Reading `DurableConsumerRunner.state` (and `EventConsumers.state()`) first
+  checks for a pause. The startup log line names the bound (`pin given up after … ms without
+server contact`).
+- **Detector SDK**: ticks stop as soon as the position consumer leaves the active role (the
+  registry is set inactive from `onStateChange`, before `onDeactivated` waits for the handlers of
+  the ended period), each tick re-checks the role (a stale role after a pause never ticks), and an
+  activation that finished after the role was given up leaves the instance inactive. The
+  deactivation log names the reason (`contact_lost`, `paused`).
+- **OpenAPI (K4)**: the sentence added to `@RequirePlatformAdmin()` operations matches the guards:
+  routes without `@AllowApiKey` say that API keys get `401 INVALID_API_KEY`
+  (`PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION`); routes with it keep `PLATFORM_ADMIN_DESCRIPTION`.
+  An operation whose own description already names `PLATFORM_ADMIN_REQUIRED` keeps its wording.
+  Services regenerate `openapi.json`.
+- **NATS shutdown (K3)**: `NatsClient.onApplicationShutdown` closes the connection with the warning
+  `NATS drain did not finish within … ms (server not answering)` when the drain does not finish in
+  time, instead of waiting for the `SHUTDOWN_TIMEOUT_MS` forced exit; a normal drain is unchanged.
+
+### Fixed
+
+- An exclusive-consumer instance cut off from NATS stayed active (and ticked) while the server
+  pinned another instance after the TTL (K1, reported by surveillance).
+- Messages buffered across a pause longer than the pinned TTL were dispatched afterwards under the
+  old `Nats-Pin-Id` on stale state (duplicate `alert.resolved.v1`, K2, reported by surveillance).
+- `SIGTERM` against a NATS server that accepts the connection but never answers ended with the
+  forced exit (exit 1) instead of a clean stop (K3, reported by fleet).
+- The platform-admin OpenAPI sentence claimed `403` for API keys on routes that answer `401
+INVALID_API_KEY` first (K4, reported by fleet).
+
 ## [0.3.0] - 2026-11-22
 
 Hardening from the reports of the nine services built on 0.2.0 (the `LOCAL WORKAROUND`s they

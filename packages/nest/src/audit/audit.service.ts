@@ -1,6 +1,8 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
 import {
+  AUDIT_LABEL_MAX_LENGTH,
+  type AuditLabels,
   type AuditRecordedV1,
   EVENT_TYPES,
 } from '@darmawanweb/ais-its-contracts/events';
@@ -31,6 +33,34 @@ export interface AuditEntry {
   readonly meta?: Readonly<Record<string, unknown>> | undefined;
   /** Organization of the target; defaults to the principal's active organization. */
   readonly orgId?: string | null | undefined;
+  /**
+   * Names known when the record is written (`audit.recorded.v1` `labels`),
+   * e.g. `{ targetLabel: vessel.name }` in the transaction of a vessel
+   * change, so the audit log shows the name of the time even after a
+   * rename or deletion. Members left out are not sent; longer names are cut
+   * to `AUDIT_LABEL_MAX_LENGTH` (200) characters. Default: no labels (the
+   * audit log resolves names itself).
+   */
+  readonly labels?: AuditLabels | undefined;
+}
+
+/** `value` cut to the contract's length (UTF-16 units), never inside a surrogate pair. */
+function cutLabel(value: string): string {
+  if (value.length <= AUDIT_LABEL_MAX_LENGTH) return value;
+  const cut = value.slice(0, AUDIT_LABEL_MAX_LENGTH);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
+/** `labels` as sent: only the given members, each cut to the contract's length. */
+function labelsOf(labels: AuditLabels | undefined): AuditLabels | undefined {
+  if (labels === undefined) return undefined;
+  const sent: Record<string, string | null> = {};
+  for (const [name, value] of Object.entries(labels)) {
+    if (value === undefined) continue;
+    sent[name] = value === null ? null : cutLabel(value);
+  }
+  return Object.keys(sent).length === 0 ? undefined : (sent as AuditLabels);
 }
 
 /** The request facts recorded with an entry (a `FastifyRequest` fits). */
@@ -101,6 +131,7 @@ export class AuditService implements OnModuleInit {
     principal?: Principal,
     request?: AuditRequest,
   ): AuditRecordedV1 {
+    const labels = labelsOf(entry.labels);
     return {
       actorType: principal?.kind ?? 'system',
       actorId: principal?.id ?? null,
@@ -113,6 +144,7 @@ export class AuditService implements OnModuleInit {
       userAgent: userAgentOf(request),
       meta: { ...(entry.meta ?? {}) },
       at: new Date().toISOString(),
+      ...(labels === undefined ? {} : { labels }),
     };
   }
 

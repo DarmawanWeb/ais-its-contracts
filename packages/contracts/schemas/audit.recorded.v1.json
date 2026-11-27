@@ -60,6 +60,29 @@
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
       "description": "ISO-8601 UTC timestamp, e.g. 2026-11-20T08:30:00.000Z"
+    },
+    "labels": {
+      "description": "Names known to the producer when it wrote the record (optional: consumers built on older contracts ignore it)",
+      "type": "object",
+      "properties": {
+        "actorName": {
+          "description": "Display name of the actor (user or API key) at the time of the action",
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }]
+        },
+        "actorEmail": {
+          "description": "E-mail address of the acting user at the time of the action",
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }]
+        },
+        "orgName": {
+          "description": "Name of the organization (orgId) at the time of the action",
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }]
+        },
+        "targetLabel": {
+          "description": "Human-readable name of the target (targetType/targetId) at the time of the action, e.g. a vessel name",
+          "anyOf": [{ "type": "string", "maxLength": 200 }, { "type": "null" }]
+        }
+      },
+      "title": "AuditLabels"
     }
   },
   "required": [

@@ -146,6 +146,8 @@ function toHex(bytes: Uint8Array): string {
  * @returns a promise of the hex digest.
  * @throws {TypeError} (as a rejection) when `key` is not a well-formed API key;
  * the message never contains the value.
+ * @method security.api_key_hashing
+ * @see docs/METHODOLOGY.md#security.api_key_hashing
  *
  * @example
  * const keyHash = await hashApiKey(presentedKey); // "b9d4a32b…"

@@ -40,6 +40,7 @@ import {
   waitFor,
 } from '../src/testing/index.js';
 import { testInfra, uniqueName } from './support/infra.js';
+import { startTcpLink } from './support/tcp-link.js';
 
 const base = 300_000_000 + Math.floor(Math.random() * 600_000_000);
 
@@ -83,6 +84,12 @@ function pinnedClientId(info: unknown): string | undefined {
 
 @Module({ imports: [NatsModule.forRoot({ streams: ['FUEL'] })] })
 class NatsOnlyModule {}
+
+/** A second connection (through a `TcpLink`) with short API timeouts. */
+@Module({
+  imports: [NatsModule.forRoot({ streams: ['FUEL'], requestTimeoutMs: 2000 })],
+})
+class LinkedNatsModule {}
 
 const LISTENER_MMSI = base + 8;
 const listenerConsumer = fuelConsumer('listener', LISTENER_MMSI);
@@ -134,11 +141,13 @@ describe('durable consumers', () => {
       readonly hooks?: DurableConsumerRunnerOptions;
       /** Receives `<label>:handled:<minute>`. */
       readonly log?: string[];
+      /** Default: the test app's runtime (direct connection). */
+      readonly runtime?: NatsConsumerRuntime;
     } = {},
   ): Promise<DurableConsumerRunner> {
     const label = options.label ?? 'main';
     const runner = new DurableConsumerRunner(
-      runtime,
+      options.runtime ?? runtime,
       durableHandlerSettings({
         consumer: definition,
         ackWaitMs: options.ackWaitMs,
@@ -533,6 +542,150 @@ describe('durable consumers', () => {
       ),
     );
   }, 40_000);
+
+  it('keeps the pin through handlers slower than the bound while max_ack_pending is reached (K1, no spurious give-up)', async () => {
+    const mmsi = base + 10;
+    const definition = fuelConsumer('slow-pinned', mmsi);
+    const deliveries: Delivery[] = [];
+    const reasons: string[] = [];
+    // Bound 1.5 s; every handler takes 2.5 s and at most 2 messages are unacknowledged.
+    const runner = new DurableConsumerRunner(
+      runtime,
+      durableHandlerSettings({
+        consumer: definition,
+        exclusive: { pinnedTtlMs: 3000 },
+        maxAckPending: 2,
+        concurrency: 2,
+        orderBySubject: false,
+      }),
+      async (event: AnyEventEnvelope, context: EventContext) => {
+        if (event.type !== EVENT_TYPES.FUEL_READING_RECORDED) return;
+        deliveries.push({
+          minute: event.data.fuelMeTon,
+          deliveryCount: context.deliveryCount,
+          runner: 'slow',
+          at: performance.now(),
+        });
+        await sleep(2500);
+      },
+      'test.slow',
+      {
+        onDeactivated: (event) => {
+          reasons.push(event.reason);
+        },
+      },
+    );
+    await runner.start();
+    runners.push(runner);
+    for (let minute = 1; minute <= 6; minute += 1)
+      await publishReading(mmsi, minute);
+    await waitFor(() => deliveries.length === 6, { timeoutMs: 20_000 });
+    await sleep(3000);
+    expect(reasons).toEqual([]);
+    expect(runner.state).toBe('active');
+    expect(deliveries.every((d) => d.deliveryCount === 1)).toBe(true);
+  }, 40_000);
+
+  it('gives the pin up when cut off from NATS before the server can pin the standby, and is active again only through a new pin (K1)', async () => {
+    const link = await startTcpLink(testInfra().natsUrl);
+    const linked = await buildTestApp(LinkedNatsModule, {
+      config: createTestConfig(baseConfigSchema, {
+        SERVICE_NAME: 'nats-consumers-linked',
+        NATS_URL: link.url,
+      }),
+    });
+    try {
+      const mmsi = base + 9;
+      const definition = fuelConsumer('cut-off', mmsi);
+      const deliveries: Delivery[] = [];
+      const hooks: string[] = [];
+      // pinnedTtlMs 3000: pull expiry 1 s, heartbeats 0.5 s, bound 1.5 s.
+      const exclusive = { pinnedTtlMs: 3000 };
+      let aStandbyAt = Infinity;
+      let bActiveAt = Infinity;
+      const a = await startRunner(definition, deliveries, {
+        label: 'a',
+        exclusive,
+        runtime: linked.get(NatsConsumerRuntime),
+        hooks: {
+          onActivated: (event) => {
+            hooks.push(
+              `a:activated:${event.previous === undefined ? 'first' : 'new-pin'}`,
+            );
+          },
+          onDeactivated: (event) => {
+            hooks.push(`a:deactivated:${event.reason}`);
+          },
+          onStateChange: (state) => {
+            if (state === 'standby')
+              aStandbyAt = Math.min(aStandbyAt, performance.now());
+          },
+        },
+      });
+      await publishReading(mmsi, 1);
+      await waitFor(() => deliveries.length === 1);
+      expect(a.state).toBe('active');
+      const b = await startRunner(definition, deliveries, {
+        label: 'b',
+        exclusive,
+        hooks: {
+          onStateChange: (state) => {
+            if (state === 'active') bActiveAt = performance.now();
+          },
+        },
+      });
+      await sleep(300);
+      expect(b.state).toBe('starting');
+
+      // a is cut off (its connection stays open, nothing gets through).
+      const cutAt = performance.now();
+      link.hold();
+      await waitFor(() => a.state === 'standby', { timeoutMs: 5000 });
+      // Within the bound plus one watchdog interval, before the pinned TTL.
+      expect(aStandbyAt - cutAt).toBeGreaterThan(1000);
+      expect(aStandbyAt - cutAt).toBeLessThan(2600);
+      await waitFor(() => hooks.includes('a:deactivated:contact_lost'));
+      // Once the TTL has passed the server pins b with the next message.
+      await sleep(Math.max(0, cutAt + 4000 - performance.now()));
+      await publishReading(mmsi, 2);
+      await waitFor(() => deliveries.length === 2, { timeoutMs: 10_000 });
+      expect(deliveries[1]?.runner).toBe('b');
+      expect(b.state).toBe('active');
+      // a had given its role up before b could become active.
+      expect(aStandbyAt).toBeLessThan(bActiveAt);
+
+      // Back in contact: a re-subscribes as a standby, b keeps the pin.
+      link.release();
+      await sleep(5000);
+      expect(a.state).toBe('standby');
+      await publishReading(mmsi, 3);
+      await waitFor(() => deliveries.length === 3);
+      expect(deliveries[2]?.runner).toBe('b');
+
+      // b stops: a is pinned afresh and activated again.
+      await b.stop(2000);
+      runners.splice(runners.indexOf(b), 1);
+      await publishReading(mmsi, 4);
+      await waitFor(() => deliveries.length === 4, { timeoutMs: 15_000 });
+      expect(deliveries[3]?.runner).toBe('a');
+      expect(a.state).toBe('active');
+      expect(hooks).toEqual([
+        'a:activated:first',
+        'a:deactivated:contact_lost',
+        'a:activated:new-pin',
+      ]);
+      expect(
+        deliveries.filter((d) => d.runner === 'a').map((d) => d.minute),
+      ).toEqual([1, 4]);
+    } finally {
+      link.release();
+      const own = runners.filter((runner) => runner.name.includes('cut-off'));
+      await Promise.all(own.map((runner) => runner.stop(2000)));
+      for (const runner of own) runners.splice(runners.indexOf(runner), 1);
+      await linked.close();
+      await link.close();
+    }
+  }, 60_000);
 });
 
 describe('exclusive @EventHandler providers (ExclusiveConsumerListener)', () => {

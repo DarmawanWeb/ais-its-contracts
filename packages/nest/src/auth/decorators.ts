@@ -13,6 +13,7 @@ import type { FastifyRequest } from 'fastify';
 
 import { UnauthorizedError } from '../errors/domain-error.js';
 import {
+  API_KEY_SCOPES_EXTENSION,
   PLATFORM_ADMIN_ROLES_EXTENSION,
   SECURITY_SCHEMES,
 } from '../http/openapi-security.js';
@@ -56,13 +57,16 @@ export function RequirePermissions(
 /**
  * Restricts a route (or every route of a controller) to platform
  * administrators: the global guard requires a signed-in user with the
- * `super_admin` role (`UserPrincipal.isPlatformAdmin`); other users and API
- * keys get `403 PLATFORM_ADMIN_REQUIRED`. Combines with
- * `@RequirePermissions` (both must hold). A handler-level `@Public()` wins
- * over a controller-level `@RequirePlatformAdmin()`, as for the other
- * decorators. OpenAPI shows `x-required-roles: ["super_admin"]`, and
- * `buildOpenApiDocument` adds `PLATFORM_ADMIN_DESCRIPTION` (`./http`) to
- * the operation description.
+ * `super_admin` role (`UserPrincipal.isPlatformAdmin`); other users get
+ * `403 PLATFORM_ADMIN_REQUIRED`, and so do API keys on routes that accept
+ * them (`@AllowApiKey`) — elsewhere an API key gets `401 INVALID_API_KEY`
+ * first. Combines with `@RequirePermissions` (both must hold). A
+ * handler-level `@Public()` wins over a controller-level
+ * `@RequirePlatformAdmin()`, as for the other decorators. OpenAPI shows
+ * `x-required-roles: ["super_admin"]`, and `buildOpenApiDocument` adds the
+ * matching sentence (`PLATFORM_ADMIN_DESCRIPTION` or
+ * `PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION`, `./http`) to the operation
+ * description, unless it already names `PLATFORM_ADMIN_REQUIRED`.
  *
  * @example
  * @RequirePlatformAdmin()
@@ -92,7 +96,7 @@ export function AllowApiKey(
     SetMetadata(API_KEY_SCOPES_KEY, scopes),
     ApiSecurity(SECURITY_SCHEMES.BEARER),
     ApiSecurity(SECURITY_SCHEMES.API_KEY),
-    ApiExtension('x-api-key-scopes', scopes),
+    ApiExtension(API_KEY_SCOPES_EXTENSION, scopes),
   );
 }
 

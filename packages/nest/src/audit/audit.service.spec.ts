@@ -117,6 +117,50 @@ describe('AuditService', () => {
     expect(Date.parse(record.at)).not.toBeNaN();
   });
 
+  it('sends the names known at write time as labels, cut to 200 characters (K5)', async () => {
+    const { service, published } = auditService();
+    // No labels: the payload is the 0.4.0 one.
+    expect(
+      'labels' in service.buildRecord({ action: 'vessel.update' }, user),
+    ).toBe(false);
+    expect(
+      'labels' in
+        service.buildRecord(
+          { action: 'vessel.update', labels: { targetLabel: undefined } },
+          user,
+        ),
+    ).toBe(false);
+    const long = `${'a'.repeat(199)}\u{1F6A2}tail`;
+    const record = service.buildRecord(
+      {
+        action: 'vessel.update',
+        targetType: 'vessel',
+        targetId: 'v-1',
+        labels: {
+          targetLabel: 'KM Sinar Jaya (IMO 9123456)',
+          orgName: null,
+          actorName: long,
+        },
+      },
+      user,
+    );
+    expect(AuditRecordedV1Schema.parse(record).labels).toEqual({
+      targetLabel: 'KM Sinar Jaya (IMO 9123456)',
+      orgName: null,
+      // Never inside a surrogate pair.
+      actorName: 'a'.repeat(199),
+    });
+    expect(
+      await service.record(
+        { action: 'zone.delete', labels: { targetLabel: 'Anchorage A' } },
+        user,
+      ),
+    ).toBe(true);
+    expect(published.at(-1)?.envelope.data).toMatchObject({
+      labels: { targetLabel: 'Anchorage A' },
+    });
+  });
+
   it('records API keys and the system, and lets the entry name the organization', () => {
     const { service } = auditService();
     const key = new ApiKeyPrincipal({

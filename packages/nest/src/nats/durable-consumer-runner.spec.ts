@@ -23,8 +23,12 @@ import {
   type ConsumerRuntime,
   DurableConsumerRunner,
   type DurableConsumerRunnerOptions,
+  idleHeartbeatMsFor,
   orderingWarning,
+  pinContactTimeoutMs,
+  pinContactTimeoutMsFor,
   pullExpiresMsFor,
+  RETURNED_MESSAGE_DELAY_MS,
 } from './durable-consumer-runner.js';
 import {
   durableHandlerSettings,
@@ -197,6 +201,8 @@ interface Harness {
   readonly consumes: FakeConsume[];
   readonly handled: number[];
   readonly events: string[];
+  /** Every `onStateChange`. */
+  readonly states: string[];
   readonly unpin: ReturnType<typeof vi.fn>;
   /** `jetstream.publish` (dead-letter copies). */
   readonly publish: ReturnType<typeof vi.fn>;
@@ -214,6 +220,7 @@ function harness(
   const consumes: FakeConsume[] = [];
   const handled: number[] = [];
   const events: string[] = [];
+  const states: string[] = [];
   const metrics = new MetricsService();
   const unpin = vi.fn(() => Promise.resolve(true));
   const publish = vi.fn(() => Promise.resolve({ seq: 1, duplicate: false }));
@@ -285,13 +292,22 @@ function harness(
       await options.handler?.(event.data.fuelMeTon);
     },
     'Unit.handler',
-    { onActivated: record('activated'), onDeactivated: record('deactivated') },
+    {
+      onActivated: record('activated'),
+      onDeactivated: record('deactivated'),
+      onStateChange: (state) => {
+        states.push(state);
+        options.onStateChange?.(state);
+      },
+      clock: options.clock,
+    },
   );
   return {
     runner,
     consumes,
     handled,
     events,
+    states,
     unpin,
     publish,
     metrics,
@@ -517,5 +533,254 @@ describe('DurableConsumerRunner exclusive consumers (fake consume iterator)', ()
       messages.some((message) => message.includes('pinnedTtlMs 2000')),
     ).toBe(true);
     expect(ordered.runner.state).toBe('shared');
+  });
+});
+
+describe('pinContactTimeoutMsFor', () => {
+  const exclusive = (pinnedTtlMs: number): DurableHandlerSettings =>
+    durableHandlerSettings({
+      consumer: definition(),
+      exclusive: { pinnedTtlMs },
+    });
+
+  it('is pinnedTtlMs − pull expiry − heartbeat: half the TTL from 3 to 90 s, at least two heartbeats', () => {
+    expect(
+      pinContactTimeoutMsFor(
+        durableHandlerSettings({ consumer: definition() }),
+      ),
+    ).toBeUndefined();
+    expect(idleHeartbeatMsFor(exclusive(30_000))).toBe(5000);
+    expect(pinContactTimeoutMsFor(exclusive(30_000))).toBe(15_000);
+    expect(pinContactTimeoutMsFor(exclusive(3000))).toBe(1500);
+    expect(pinContactTimeoutMsFor(exclusive(9000))).toBe(4500);
+    expect(pinContactTimeoutMsFor(exclusive(90_000))).toBe(45_000);
+    // Pull expiry capped at 30 s, heartbeats at 15 s.
+    expect(pinContactTimeoutMsFor(exclusive(200_000))).toBe(155_000);
+    // Below 3 s the bound cannot be kept: two heartbeats at least.
+    expect(pinContactTimeoutMsFor(exclusive(2000))).toBe(1000);
+    // The public form takes the TTL (default 30 s).
+    expect(pinContactTimeoutMs()).toBe(15_000);
+    expect(pinContactTimeoutMs(3000)).toBe(1500);
+    for (const ttl of [3000, 5000, 30_000, 60_000, 90_000, 300_000]) {
+      const settings = exclusive(ttl);
+      const bound = pinContactTimeoutMsFor(settings) ?? Infinity;
+      // Early enough: the server cannot unpin before ttl − expires after the last contact…
+      expect(bound + idleHeartbeatMsFor(settings)).toBeLessThanOrEqual(
+        ttl - pullExpiresMsFor(settings),
+      );
+      // …and never spurious: about three heartbeats missed in a row.
+      expect(bound).toBeGreaterThanOrEqual(2 * idleHeartbeatMsFor(settings));
+    }
+  });
+});
+
+describe('DurableConsumerRunner pin watchdog (contact loss and pauses)', () => {
+  const running: DurableConsumerRunner[] = [];
+  afterEach(async () => {
+    await Promise.all(running.splice(0).map((runner) => runner.stop(500)));
+    vi.restoreAllMocks();
+  });
+
+  /** A monotonic clock that a test can move forward (a pause of the process). */
+  function jumpClock(): { readonly now: () => number; jump(ms: number): void } {
+    let offset = 0;
+    return {
+      now: () => performance.now() + offset,
+      jump: (ms) => {
+        offset += ms;
+      },
+    };
+  }
+
+  async function activeOn(h: Harness, pinId: string): Promise<FakeConsume> {
+    await h.runner.start();
+    running.push(h.runner);
+    const consume = h.consumes[0];
+    if (consume === undefined) throw new Error('not consuming');
+    consume.messages.push(fakeMessage(pinId));
+    await until(() => h.handled.length === 1);
+    expect(h.runner.state).toBe('active');
+    h.pinned = pinId;
+    return consume;
+  }
+
+  /** The hook calls after the first activation. */
+  const laterHooks = (h: Harness): string[] =>
+    h.events
+      .filter((e) => e.startsWith('activated') || e.startsWith('deactivated'))
+      .slice(1);
+
+  async function returnedCount(h: Harness): Promise<string> {
+    return h.metrics.registry.getSingleMetricAsString(
+      'aisits_events_consumed_total',
+    );
+  }
+
+  it('gives the pin up after the bound without server contact, then activates only through a new pin (K1)', async () => {
+    // pinnedTtlMs 3000: pull expiry 1000, heartbeats 500, bound 1500 ms.
+    const h = harness(exclusiveSettings(3000));
+    const consume = await activeOn(h, 'pin-1');
+    const activeAt = performance.now();
+    await until(() => h.runner.state === 'standby', 4000);
+    const after = performance.now() - activeAt;
+    expect(after).toBeGreaterThan(1400);
+    expect(after).toBeLessThan(2500);
+    // onStateChange hears of it at once; onDeactivated with the reason.
+    expect(h.states).toEqual(['active', 'standby']);
+    await until(() => h.events.some((e) => e.startsWith('deactivated')));
+    expect(h.events.at(-1)).toBe('deactivated:contact_lost:pin-1:-');
+    // The subscription with the old pin is given up…
+    expect(consume.messages.closed).toBe(true);
+    // …a late message of the old pin is returned, never handled…
+    // …and supervise() releases the pin it still holds and subscribes afresh.
+    await until(() => h.consumes.length === 2, 4000);
+    expect(h.unpin).toHaveBeenCalledWith('FUEL', 'unit-runner', 'active');
+    const next = h.consumes[1];
+    if (next === undefined) throw new Error('not re-subscribed');
+    const stale = fakeMessage('pin-1');
+    next.messages.push(stale);
+    await until(() => stale.settled.length === 1);
+    expect(stale.settled).toEqual([`nak:${RETURNED_MESSAGE_DELAY_MS}`]);
+    expect(h.runner.state).toBe('standby');
+    // A new pin activates it again (activation hook first).
+    next.messages.push(fakeMessage('pin-2'));
+    await until(() => h.handled.length === 2);
+    expect(h.events).toContain('activated:pinned:pin-2:pin-1');
+    expect(h.runner.state).toBe('active');
+    expect(await returnedCount(h)).toMatch(/outcome="returned"\} 1/);
+  }, 10_000);
+
+  it('never gives the pin up while heartbeats arrive, with jitter, slow handlers and short event-loop stalls (K1)', async () => {
+    const slow = deferred();
+    const h = harness(exclusiveSettings(3000), {
+      handler: (minute) =>
+        minute % 2 === 0 ? slow.promise : Promise.resolve(),
+    });
+    const consume = await activeOn(h, 'pin-1');
+    const until5s = performance.now() + 5000;
+    let beat = 0;
+    while (performance.now() < until5s) {
+      beat += 1;
+      // Heartbeats every 500 ms ± 250 ms; a message now and then.
+      await sleep(250 + ((beat * 7919) % 500));
+      consume.statuses.push({ type: 'heartbeat' } as ConsumerNotification);
+      if (beat % 3 === 0) consume.messages.push(fakeMessage('pin-1'));
+      // A GC-like stall of the event loop, well below the bound.
+      if (beat % 4 === 0) {
+        const stallUntil = performance.now() + 300;
+        while (performance.now() < stallUntil) {
+          /* busy */
+        }
+      }
+    }
+    slow.resolve();
+    expect(h.runner.state).toBe('active');
+    expect(h.states).toEqual(['active']);
+    expect(h.events.filter((e) => e.startsWith('deactivated'))).toEqual([]);
+    expect(consume.messages.closed).toBe(false);
+  }, 10_000);
+
+  it('after a pause, returns what it buffered and reloads before dispatching while the server still pins it (K2)', async () => {
+    const clock = jumpClock();
+    let activations = 0;
+    const reload = deferred();
+    const h = harness(exclusiveSettings(3000), {
+      clock: clock.now,
+      onActivated: () => {
+        activations += 1;
+        return activations === 2 ? reload.promise : Promise.resolve();
+      },
+    });
+    const consume = await activeOn(h, 'pin-1');
+    // The process did not run for 5 s; then buffered messages of pin-1 arrive.
+    clock.jump(5000);
+    const buffered = [fakeMessage('pin-1'), fakeMessage('pin-1')];
+    for (const message of buffered) consume.messages.push(message);
+    consume.statuses.push({ type: 'heartbeat' } as ConsumerNotification);
+    await until(() => buffered.every((m) => m.settled.length === 1));
+    expect(buffered.map((m) => m.settled)).toEqual([
+      [`nak:${RETURNED_MESSAGE_DELAY_MS}`],
+      [`nak:${RETURNED_MESSAGE_DELAY_MS}`],
+    ]);
+    expect(h.handled).toHaveLength(1);
+    expect(h.states.slice(0, 2)).toEqual(['active', 'standby']);
+    // The server confirmed pin-1: deactivation, then the activation reload.
+    await until(() => activations === 2);
+    expect(laterHooks(h)).toEqual([
+      'deactivated:paused:pin-1:-',
+      'activated:pinned:pin-1:pin-1',
+    ]);
+    expect(h.runner.state).toBe('active');
+    // The redeliveries wait for the reload.
+    const redelivered = buffered.map(() => fakeMessage('pin-1', 2));
+    for (const message of redelivered) consume.messages.push(message);
+    await sleep(50);
+    expect(h.handled).toHaveLength(1);
+    reload.resolve();
+    await until(() => h.handled.length === 3);
+    expect(redelivered.map((m) => m.settled)).toEqual([['ack'], ['ack']]);
+    // The subscription and its pin were kept.
+    expect(consume.messages.closed).toBe(false);
+    expect(h.consumes).toHaveLength(1);
+    const consumed = await returnedCount(h);
+    expect(consumed).toMatch(/outcome="returned"\} 2/);
+    expect(consumed).not.toMatch(/outcome="nak"/);
+  });
+
+  it('after a pause, stays a standby and subscribes afresh when another instance holds the pin (K2)', async () => {
+    const clock = jumpClock();
+    const h = harness(exclusiveSettings(3000), { clock: clock.now });
+    const consume = await activeOn(h, 'pin-1');
+    h.pinned = 'pin-other';
+    clock.jump(5000);
+    const buffered = fakeMessage('pin-1');
+    // On its last delivery a returned message is dead-lettered, never dropped.
+    const last = fakeMessage('pin-1', 3);
+    consume.messages.push(buffered);
+    consume.messages.push(last);
+    await until(
+      () => buffered.settled.length === 1 && last.settled.length === 1,
+    );
+    expect(buffered.settled).toEqual([`nak:${RETURNED_MESSAGE_DELAY_MS}`]);
+    expect(last.settled).toEqual(['ack']);
+    expect(h.publish.mock.calls[0]?.[0]).toBe('dlq.FUEL.unit-runner');
+    await until(() => consume.messages.closed);
+    expect(h.runner.state).toBe('standby');
+    expect(laterHooks(h)).toEqual(['deactivated:paused:pin-1:-']);
+    expect(h.handled).toHaveLength(1);
+    // Never unpins the other instance; re-subscribes as a standby.
+    await until(() => h.consumes.length === 2, 4000);
+    expect(h.unpin).not.toHaveBeenCalled();
+    expect(h.runner.state).toBe('standby');
+  }, 10_000);
+
+  it('detects a pause between messages with its watchdog and checks the pin before ticking again (K2)', async () => {
+    const clock = jumpClock();
+    const h = harness(exclusiveSettings(3000), { clock: clock.now });
+    await activeOn(h, 'pin-1');
+    clock.jump(4000);
+    await until(() => laterHooks(h).length === 2);
+    expect(laterHooks(h)).toEqual([
+      'deactivated:paused:pin-1:-',
+      'activated:pinned:pin-1:pin-1',
+    ]);
+    expect(h.states).toEqual(['active', 'standby', 'active']);
+  });
+
+  it('runs no watchdog for shared consumers', async () => {
+    const clock = jumpClock();
+    const h = harness(
+      durableHandlerSettings({ consumer: definition(), backoffMs: [100] }),
+      { clock: clock.now },
+    );
+    await h.runner.start();
+    running.push(h.runner);
+    clock.jump(120_000);
+    const message = fakeMessage(undefined);
+    h.consumes[0]?.messages.push(message);
+    await until(() => h.handled.length === 1);
+    expect(message.settled).toEqual(['ack']);
+    expect(h.runner.state).toBe('shared');
+    expect(h.states).toEqual([]);
   });
 });

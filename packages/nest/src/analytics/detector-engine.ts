@@ -7,7 +7,11 @@ import type {
 import { Logger } from '@nestjs/common';
 
 import { errorMessage } from '../common/retry.js';
-import type { AlertPublicationResult, OpenAlert } from './alert-emitter.js';
+import type {
+  AlertPublicationResult,
+  OpenAlert,
+  UnannouncedResolution,
+} from './alert-emitter.js';
 import type { DetectorVesselChange, DetectorZoneChange } from './detector.js';
 import { DetectorMetrics, type PositionOutcome } from './detector-metrics.js';
 import type {
@@ -25,6 +29,14 @@ export interface DetectorActivationOptions {
    * (after a failover it may then re-raise what another instance raised).
    */
   readonly loadOpen?: (() => Promise<readonly OpenAlert[]>) | undefined;
+  /**
+   * Source of the resolutions whose announcement may have been lost,
+   * normally `AlertPersistence.loadUnannounced`: queued after the reload
+   * (`AlertEmitter.restoreUnannounced`, enabled detectors only). A failure
+   * is logged and does not fail the activation.
+   */
+  readonly loadUnannounced?:
+    (() => Promise<readonly UnannouncedResolution[]>) | undefined;
 }
 
 /** What {@link DetectorEngine.activate} did. */
@@ -39,6 +51,8 @@ export interface DetectorActivation {
   readonly flushed: AlertPublicationResult;
   /** Vessel states re-seeded from the state mirror (0 without one). */
   readonly vesselsReseeded: number;
+  /** Resolutions queued for announcement from `loadUnannounced` (0 without it). */
+  readonly unannounced: number;
 }
 
 /**
@@ -161,6 +175,9 @@ export class DetectorEngine {
           filter: (alert) => this.registry.owns(alert),
         });
       }
+      const unannounced = await this.restoreUnannounced(
+        options.loadUnannounced,
+      );
       let vesselsReseeded = 0;
       try {
         vesselsReseeded = await vessels.warmUp();
@@ -179,10 +196,35 @@ export class DetectorEngine {
         ...replaced,
         flushed,
         vesselsReseeded,
+        unannounced,
       };
     } catch (error) {
       this.metrics.activations.inc({ outcome: 'failed' });
       throw error;
+    }
+  }
+
+  /**
+   * Queues the resolutions of the enabled detectors whose announcement may
+   * have been lost (`AlertPersistence.loadUnannounced`); best effort (a
+   * failure is logged). Called on activation, and by the runner at startup
+   * when it has no exclusive consumer.
+   *
+   * @returns how many were queued.
+   */
+  async restoreUnannounced(
+    load: (() => Promise<readonly UnannouncedResolution[]>) | undefined,
+  ): Promise<number> {
+    if (load === undefined) return 0;
+    try {
+      return await this.services.alerts.restoreUnannounced(await load(), {
+        filter: (alert) => this.registry.owns(alert),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Loading the unannounced resolutions failed (they are announced on a later activation): ${errorMessage(error)}`,
+      );
+      return 0;
     }
   }
 

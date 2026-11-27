@@ -7,6 +7,45 @@ All notable changes to this repository are documented in this file. The format f
 
 ## [Unreleased]
 
+Kit and contracts follow-ups reported by the services during their 0.2.0 upgrades (K1–K9). The
+kit's changes (exclusive consumers that give their pin up when cut off from NATS or after a pause,
+bounded NATS drain, guard-accurate platform-admin OpenAPI sentence, transaction `onRetry`, audit
+labels, resolutions a crash would lose) are listed in
+[`packages/nest/CHANGELOG.md`](packages/nest/CHANGELOG.md) and the service steps in
+[`packages/nest/UPGRADING.md`](packages/nest/UPGRADING.md#upgrading-from-030-to-the-next-release).
+Everything is additive; no rollout order is required.
+
+### Added
+
+#### `@darmawanweb/ais-its-contracts`
+
+- **`audit.recorded.v1` `labels`** (optional, K5): `AuditLabelsSchema` / `AuditLabels`
+  (`actorName`, `actorEmail`, `orgName`, `targetLabel`, each optional and `string | null`, at most
+  `AUDIT_LABEL_MAX_LENGTH` = 200 characters): the names the producer knew when it wrote the record.
+  A compatible change of the event type: consumers on 0.4.0 strip the member, producers on 0.4.0
+  never send it (JSON Schema and AsyncAPI regenerated).
+- **Methodology catalog: the `security` domain gets its methods (K9).** 13 methods —
+  `security.password_hashing`, `security.password_policy`, `security.login_throttle`,
+  `security.refresh_rotation`, `security.secret_encryption`, `security.signing_key_lifecycle`,
+  `security.totp`, `security.api_key_scope_grant`, `security.invitation_consent`,
+  `security.client_ip`, `security.api_key_rotation`, `security.csv_injection` (owner `auth`) and
+  `security.api_key_hashing` (owner `contracts`, `hashApiKey` now carries its `@method` tag) — and
+  15 references (RFC 9106, RFC 9700, RFC 6238, RFC 4226, RFC 7519, RFC 8725, RFC 8037, RFC 7638,
+  RFC 7517, RFC 5869, NIST SP 800-63B-4, NIST SP 800-38D, the OWASP Password Storage and
+  Authentication cheat sheets, OWASP CSV Injection), appended so citation numbers stay stable,
+  each checked on 2026-11-27 (identity and the cited content through search extracts; two marked
+  `partially_verified` where the content was seen only in secondary quotations). Design defaults
+  stay `needsCitation`; `security.password_policy` records its deviation from NIST SP 800-63B-4.
+  The catalog has 122 methods (117 implemented, 5 not implemented) and 164 references.
+
+### Changed
+
+- Methodology catalog: `ietf-rfc-4180` and `nist-fips-180-4` re-checked (now `verified`);
+  the notes of `fuel.first_formula` name the 0.2.0 code locations (fleet validates with
+  `validateFuelFormula` in `src/modules/common/validation.ts#IsFuelFormula`, emission parses and
+  evaluates in `src/domain/fuel/first-formula.ts`) instead of the removed
+  `src/domain/fuel-formula.ts#parseFuelFormula` and `src/domain/expression/evaluator.ts` (K8).
+
 ## [0.4.0] - 2026-11-22
 
 `@darmawanweb/ais-its-contracts` 0.4.0 and `@darmawanweb/ais-its-nest` 0.3.0: the hardening reported

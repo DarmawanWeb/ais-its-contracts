@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { EVENT_EXAMPLES } from './__fixtures__/examples.js';
+import {
+  AUDIT_LABEL_MAX_LENGTH,
+  AuditRecordedV1Schema,
+} from './payloads/audit.js';
 import { EVENT_SCHEMAS, validateEvent } from './registry.js';
 import { type EventType, EVENT_TYPE_LIST } from './types.js';
 
@@ -340,6 +344,16 @@ const INVALID_CASES: Readonly<Record<EventType, readonly InvalidCase[]>> = {
       path: 'actorType',
     },
     { name: 'meta missing', patch: { meta: undefined }, path: 'meta' },
+    {
+      name: 'target label over 200 characters',
+      patch: { labels: { targetLabel: 'x'.repeat(201) } },
+      path: 'labels.targetLabel',
+    },
+    {
+      name: 'labels not an object',
+      patch: { labels: 'KM Sinar' },
+      path: 'labels',
+    },
   ],
 };
 
@@ -512,6 +526,31 @@ describe('spec 1.1 payload changes', () => {
         reason: 'x'.repeat(500),
       }).success,
     ).toBe(true);
+  });
+
+  it('accepts audit records with and without the optional labels (K5)', () => {
+    const base = EVENT_EXAMPLES['audit.recorded.v1'];
+    const labelled = AuditRecordedV1Schema.parse({
+      ...base,
+      labels: {
+        actorName: 'Rina Siregar',
+        actorEmail: 'rina@example.com',
+        orgName: null,
+        targetLabel: 'KM Sinar Jaya (IMO 9123456)',
+      },
+    });
+    expect(labelled.labels).toEqual({
+      actorName: 'Rina Siregar',
+      actorEmail: 'rina@example.com',
+      orgName: null,
+      targetLabel: 'KM Sinar Jaya (IMO 9123456)',
+    });
+    expect(AuditRecordedV1Schema.parse({ ...base, labels: {} }).labels).toEqual(
+      {},
+    );
+    // A 0.4.0 record (no labels) stays valid, and stays without them.
+    expect('labels' in AuditRecordedV1Schema.parse(base)).toBe(false);
+    expect(AUDIT_LABEL_MAX_LENGTH).toBe(200);
   });
 
   it('accepts an optional fixed capacity on the ship type', () => {

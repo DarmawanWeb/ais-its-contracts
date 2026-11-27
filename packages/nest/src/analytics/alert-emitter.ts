@@ -18,6 +18,7 @@ import {
 } from '@darmawanweb/ais-its-contracts/events';
 import { Logger } from '@nestjs/common';
 
+import { errorMessage } from '../common/retry.js';
 import { KeyedSerialQueue } from '../common/semaphore.js';
 
 /** Default {@link AlertEmitterOptions.cooldownMs}: 10 min. */
@@ -218,6 +219,54 @@ export interface AlertPersistence {
    * when the store has them.
    */
   loadOpen?(): Promise<readonly OpenAlert[]>;
+  /**
+   * Resolutions recorded by {@link onResolved} with an `eventId` whose
+   * `alert.resolved.v1` was not confirmed by {@link onResolutionPublished}
+   * — those still waiting for the alert cooldown when a process crashed.
+   * The detector runner announces them again (same event id) when this
+   * instance becomes the active one (or at startup without an exclusive
+   * consumer), after the rest of the key's cooldown, so a crash never
+   * leaves an inbox alert open. Return only recent ones (e.g. resolved in
+   * the last day), with the occurrence as it ended (`publishedAt` = its
+   * last published raise). Optional: without it a crash within the
+   * cooldown loses the announcement.
+   */
+  loadUnannounced?(): Promise<readonly UnannouncedResolution[]>;
+  /**
+   * The `alert.resolved.v1` of a resolution was stored by JetStream: mark
+   * it announced, so {@link loadUnannounced} no longer returns it. A
+   * failure is logged and ignored (the resolution may be announced once
+   * more, with the same event id: consumers deduplicate it).
+   */
+  onResolutionPublished?(resolution: PublishedResolution): Promise<void>;
+}
+
+/** A resolution whose announcement may be lost ({@link AlertPersistence.loadUnannounced}). */
+export interface UnannouncedResolution {
+  /** The occurrence as it ended; `publishedAt` is its last published raise (start of the cooldown). */
+  readonly alert: OpenAlert;
+  /** End of the condition (`AlertResolution.resolvedAt`). */
+  readonly resolvedAt: Date;
+  /** Why it ended (`AlertResolution.reason`). */
+  readonly reason?: string | null | undefined;
+  /** `AlertResolution.data`. */
+  readonly data?: Readonly<Record<string, unknown>> | undefined;
+  /** `AlertResolution.eventId` stored by `onResolved`: the event keeps its id. */
+  readonly eventId: string;
+}
+
+/** An announced resolution ({@link AlertPersistence.onResolutionPublished}). */
+export interface PublishedResolution {
+  readonly dedupKey: string;
+  readonly alertId: string;
+  /** Id of the published `alert.resolved.v1` (envelope id, `Nats-Msg-Id`). */
+  readonly eventId: string;
+}
+
+/** Options of {@link AlertEmitter.restoreUnannounced}. */
+export interface AlertRestoreUnannouncedOptions {
+  /** Restores only the resolutions whose occurrence this accepts (default: all). */
+  readonly filter?: ((alert: OpenAlert) => boolean) | undefined;
 }
 
 /** Options of {@link AlertEmitter.resolve}. */
@@ -419,6 +468,56 @@ export class AlertEmitter {
    */
   restore(alerts: readonly OpenAlert[]): void {
     for (const alert of alerts) this.install(normalizeOpen(alert));
+  }
+
+  /**
+   * Queues resolutions whose announcement may have been lost
+   * (`AlertPersistence.loadUnannounced`, e.g. after a crash within the
+   * cooldown): each `alert.resolved.v1` goes out with its stored event id
+   * once the key's cooldown since `alert.publishedAt` has ended (by
+   * {@link retryPending}, at once by {@link flush}), and the key's cooldown
+   * entry is restored, so a re-raise within the cooldown reopens the
+   * occurrence and cancels the announcement as it would have without the
+   * crash. Skipped: resolutions outside `filter`, of an occurrence that is
+   * open here again, already pending here, or that cannot be built (no
+   * domain or method id). Calls no persistence hook. Runs each key in turn
+   * with its other operations.
+   *
+   * @returns how many were queued.
+   */
+  async restoreUnannounced(
+    resolutions: readonly UnannouncedResolution[],
+    options: AlertRestoreUnannouncedOptions = {},
+  ): Promise<number> {
+    if (this.options.publishResolution === undefined) return 0;
+    const inScope = options.filter ?? (() => true);
+    let queued = 0;
+    for (const resolution of resolutions) {
+      const alert = normalizeOpen(resolution.alert);
+      if (!inScope(alert)) continue;
+      const key = alert.dedupKey;
+      await this.runKeyed(key, async () => {
+        if (this.open.get(key)?.alertId === alert.alertId) return;
+        const existing = this.pendingResolutions.get(key);
+        if (existing?.event.alertId === alert.alertId) return;
+        const built = this.resolutionEvent(alert, resolution.resolvedAt, {
+          reason: resolution.reason ?? undefined,
+          data: resolution.data,
+        });
+        if (built === undefined) return;
+        // An earlier resolution of the key still pending here goes out first.
+        if (existing !== undefined)
+          await this.publishPendingResolution(key, true);
+        this.pendingResolutions.set(key, {
+          event: { ...built, id: resolution.eventId },
+          dueAt: alert.publishedAt.getTime() + this.cooldownMs,
+        });
+        if (!this.open.has(key))
+          this.closed.set(key, { alert, closedAt: resolution.resolvedAt });
+        queued += 1;
+      });
+    }
+    return queued;
   }
 
   /** Restores the open occurrences of the persistence hook, if it has `loadOpen`; returns how many. */
@@ -1033,7 +1132,25 @@ export class AlertEmitter {
     await publish(pending.event);
     if (this.pendingResolutions.get(dedupKey) === pending)
       this.pendingResolutions.delete(dedupKey);
+    await this.markAnnounced(pending.event);
     return true;
+  }
+
+  /** Tells the persistence hook that a resolution went out (failures are logged). */
+  private async markAnnounced(event: AlertResolvedV1): Promise<void> {
+    const hook = this.options.persistence?.onResolutionPublished;
+    if (hook === undefined) return;
+    try {
+      await hook.call(this.options.persistence, {
+        dedupKey: event.dedupKey,
+        alertId: event.alertId,
+        eventId: event.id,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Marking the resolution ${event.id} of ${event.dedupKey} announced failed (it may be announced again): ${errorMessage(error)}`,
+      );
+    }
   }
 
   /**

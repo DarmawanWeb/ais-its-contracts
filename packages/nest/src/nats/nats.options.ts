@@ -10,6 +10,12 @@ export const NATS_OPTIONS = 'AISITS_NATS_OPTIONS';
  */
 export const DEFAULT_MIN_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Default {@link NatsModuleOptions.connectionDrainTimeoutMs}: 5 s, the
+ * longest the connection drain at shutdown waits for the server.
+ */
+export const DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS = 5000;
+
 /** Options of `NatsModule.forRoot()`. */
 export interface NatsModuleOptions {
   /**
@@ -28,6 +34,16 @@ export interface NatsModuleOptions {
    * aborting them, ms. Default 25 s.
    */
   readonly drainTimeoutMs?: number | undefined;
+  /**
+   * Longest wait for the connection drain at shutdown (pending publishes
+   * flushed, subscriptions drained), ms; then the connection is closed with
+   * a warning, so a server that accepts the connection but never answers
+   * (a paused container, a partition) cannot hold the shutdown until the
+   * `SHUTDOWN_TIMEOUT_MS` forced exit. The wait is also bounded by what is
+   * left of that budget (less 1 s for the hooks that follow). Default
+   * {@link DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS} (5 s).
+   */
+  readonly connectionDrainTimeoutMs?: number | undefined;
   /**
    * Smallest server `max_payload` the service expects, bytes: a startup
    * warning is logged when the server allows less (events larger than the

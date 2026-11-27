@@ -1,5 +1,87 @@
 # Upgrading services to `@darmawanweb/ais-its-nest` 0.3
 
+- [Upgrading from 0.3.0 to the next release](#upgrading-from-030-to-the-next-release) (the kit
+  patch K1–K9, unreleased)
+- [Upgrading from 0.2 to 0.3.0](#upgrading-from-02-to-030)
+
+## Upgrading from 0.3.0 to the next release
+
+Additive and backward compatible; no rollout order. Bump both packages when they are released,
+then per service:
+
+1. **Every service with `@RequirePlatformAdmin()` routes** (auth, emission, fleet, geo):
+   regenerate `openapi.json` — the generated sentence now matches the guards (`401
+INVALID_API_KEY` for API keys on routes without `@AllowApiKey`). fleet: drop the counter-sentence
+   of `POST /vessels/:id/republish` ("…the note below applies to API keys only on routes that
+   accept them") and the README remark that the kit's sentence is wrong.
+2. **Every service with exclusive consumers or the Detector SDK** (ais-pipeline, safety,
+   surveillance, and every `exclusive` `@EventHandler`): `ExclusiveConsumerEvent.reason` may now
+   also be `'contact_lost'` or `'paused'` — code that compares with `'stopped'` / `'unpinned'`
+   keeps working, an exhaustive `switch` needs the two new cases. Dashboards may show
+   `aisits_events_consumed_total{outcome="returned"}` (messages handed back, not failures).
+   surveillance: replace the README _Platform issues_ (1) and (2) by the kit behaviour (an
+   instance cut off from NATS gives its pin up within `pinContactTimeoutMs(pinnedTtlMs)`; messages
+   buffered across a pause are returned and the activation reload runs before dispatch) and keep
+   the `AlertKeyLock` alignment (it still covers a handler that was running when the process
+   stopped). The `SIGSTOP` test in `test/ha.int.test.ts` can assert that the resumed instance
+   handles none of its buffered positions and publishes no duplicate `alert.resolved.v1`.
+3. **Optional — NATS drain** (fleet, every service): the drain at shutdown is bounded
+   (`connectionDrainTimeoutMs`, default 5 s, and the `SHUTDOWN_TIMEOUT_MS` budget); fleet can drop
+   the known limitation "Stop while NATS does not answer".
+4. **Optional — transaction retries** (fleet): replace the logging in the `retryDelayMs` function
+   of `src/db/database.ts` by `withTransaction(pool, fn, { retries, onRetry: ({ retry, retries,
+sqlState }) => { logger.warn(…); counter.inc({ sqlstate: sqlState }); } })`.
+5. **Audit labels** (`audit.recorded.v1` `labels`):
+   - **auth** (consumer): in `AuditLogConsumer.onAuditRecorded`, take each name from
+     `data.labels` when the member is present — `targetLabel` from any source for target types
+     auth does not own (`OWN_TARGET_TYPES`), `actorName`, `actorEmail` and `orgName` (and
+     `targetLabel` of its own target types) only when `event.source` is auth itself, as today —
+     and resolve the missing ones with `AuditLogsRepository.labelsFor`; keep reading
+     `meta.auditLabels` (`capturedLabelsOf`) for records written by auth 0.2.0 that are still in
+     the outbox or the stream, and strip it from the stored `meta` as now. auth (producer): pass the
+     captured names as `entry.labels` to `AuditService.enqueue` instead of `withCapturedLabels(meta,
+…)`, and drop `withCapturedLabels` once no 0.2.0 replica writes records.
+   - **producers** (fleet, geo, telemetry, notification, emission, safety, surveillance): pass
+     `labels: { targetLabel }` with the name of the audited entity as it is in the transaction of
+     the change (fleet: the vessel name, `Name (IMO …)`; geo: the zone name; telemetry: the device
+     name; notification: the alert rule / channel name; emission: the scenario or measure name),
+     e.g. `audit.enqueue(client, { action, targetType, targetId, meta, labels: { targetLabel:
+vessel.name } }, principal, request)`. A record without `labels` is stored as before.
+6. **Resolutions a crash would lose** (safety, surveillance; optional `AlertPersistence` hooks):
+   - migration: `ALTER TABLE events ADD COLUMN IF NOT EXISTS resolution_event_id uuid, ADD COLUMN
+IF NOT EXISTS resolution_announced_at timestamptz;` and a partial index `ON events
+(resolved_at) WHERE resolution_event_id IS NOT NULL AND resolution_announced_at IS NULL`
+     (recent rows only: the chunks are not compressed yet);
+   - `onResolved(resolution)`: also store `resolution_event_id = resolution.eventId ?? NULL`;
+   - the reopen path (`onUpdated` with `reopened: true`) also sets `resolution_event_id = NULL`;
+   - `onResolutionPublished({ alertId, eventId })`: `UPDATE events SET resolution_announced_at =
+now() WHERE alert_id = $1 AND resolution_event_id = $2`;
+   - `loadUnannounced()`: the rows `WHERE resolved_at IS NOT NULL AND resolution_event_id IS NOT
+NULL AND resolution_announced_at IS NULL AND resolved_at > now() - interval '1 day'`, mapped
+     like `loadOpen` (with `publishedAt` = the last published raise) plus `resolvedAt`, `reason`,
+     `data` and `eventId`;
+   - README: remove the known limitation "A crash between a resolution and the end of its
+     cooldown loses that `alert.resolved.v1`".
+7. **Methodology catalog** (auth): add the `@method` tags of the 13 `security` methods (see the
+   repository CHANGELOG) — one line each in the TSDoc of: `src/domain/password-hashing.ts`
+   `ARGON2_PARAMETERS` (`@method security.password_hashing`), `src/domain/password-policy.ts`
+   `checkPasswordPolicy` (`security.password_policy`),
+   `src/modules/throttling/auth-throttle.service.ts` `THROTTLE_LIMITS` (`security.login_throttle`),
+   `src/domain/refresh-rotation.ts` `decideRefresh` (`security.refresh_rotation`),
+   `src/domain/secret-box.ts` `sealSecret` (`security.secret_encryption`),
+   `src/domain/signing-key-rules.ts` `retirementGraceSeconds` (`security.signing_key_lifecycle`),
+   `src/domain/totp.ts` `verifyTotp` (`security.totp`), `src/domain/access-rules.ts`
+   `grantableScopes` (`security.api_key_scope_grant`),
+   `src/modules/organizations/members.service.ts` `MembersService.invite`
+   (`security.invitation_consent`), `src/common/principals.ts` `clientInfo` (`security.client_ip`),
+   `src/domain/api-key-lifecycle.ts` `rotationGraceEnd` (`security.api_key_rotation`) and
+   `src/modules/audit-logs/audit-log-csv.ts` `csvCell` (`security.csv_injection`); then
+   `GET /api/v2/auth/methodology` lists them and the README _Methodology & references_ table links
+   `docs/METHODOLOGY.md#security.*`. `pnpm references:verify` reports exactly these 12 missing tags
+   until they are added.
+
+## Upgrading from 0.2 to 0.3.0
+
 From kit **0.2.x** with contracts **0.3.x** to kit **0.3.0** with contracts **0.4.0**. Every
 change is backward compatible at the source level: a service compiles and runs after the version
 bump, apart from the TypeScript narrowing described in step 2. The work is mostly **deleting the

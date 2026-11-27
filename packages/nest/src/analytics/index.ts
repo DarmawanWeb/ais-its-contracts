@@ -20,12 +20,15 @@ export {
   type AlertResolution,
   type AlertResolutionPublisher,
   type AlertResolveOptions,
+  type AlertRestoreUnannouncedOptions,
   type AlertSignal,
   AlertSignalError,
   type AlertUpdate,
   DEFAULT_ALERT_COOLDOWN_MS,
   DEFAULT_ALERT_REPEATED_INTERVAL_MS,
   type OpenAlert,
+  type PublishedResolution,
+  type UnannouncedResolution,
 } from './alert-emitter.js';
 export {
   type AnyDetector,

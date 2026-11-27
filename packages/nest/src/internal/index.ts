@@ -34,7 +34,9 @@ export {
   type ConsumerState,
   DurableConsumerRunner,
   type DurableConsumerRunnerOptions,
+  idleHeartbeatMsFor,
   orderingWarning,
+  pinContactTimeoutMsFor,
   pullExpiresMsFor,
 } from '../nats/durable-consumer-runner.js';
 export {

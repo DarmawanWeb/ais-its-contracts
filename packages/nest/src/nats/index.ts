@@ -24,6 +24,8 @@ export {
   CONSUMER_STALL_THRESHOLD_MS,
   type ConsumerHealth,
   type ConsumerState,
+  pinContactTimeoutMs,
+  RETURNED_MESSAGE_DELAY_MS,
 } from './durable-consumer-runner.js';
 export {
   DeadLetterError,
@@ -91,6 +93,7 @@ export { NatsHealthIndicator } from './nats.health.js';
 export { type ConsumeOutcome, NatsMetrics } from './nats.metrics.js';
 export { NatsModule } from './nats.module.js';
 export {
+  DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS,
   DEFAULT_MIN_MAX_PAYLOAD_BYTES,
   NATS_OPTIONS,
   type NatsModuleOptions,

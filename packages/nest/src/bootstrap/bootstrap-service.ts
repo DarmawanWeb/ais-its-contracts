@@ -5,6 +5,7 @@ import {
   type BaseConfig,
   DEFAULT_TRUSTED_PROXIES,
 } from '../config/env-schema.js';
+import { startShutdownDeadline } from '../common/shutdown-deadline.js';
 import type { FastifyAdapterOptions } from '../http/fastify-adapter.js';
 import type { OpenApiOptions } from '../http/openapi.js';
 import {
@@ -68,6 +69,8 @@ function installShutdownDeadline(timeoutMs: number): void {
   if (timeoutMs <= 0) return;
   for (const signal of SHUTDOWN_SIGNALS) {
     process.once(signal, () => {
+      // Shutdown hooks bound their waits by what is left (NATS drain).
+      startShutdownDeadline(timeoutMs);
       setTimeout(() => {
         process.stderr.write(
           `Graceful shutdown exceeded ${timeoutMs} ms, exiting\n`,

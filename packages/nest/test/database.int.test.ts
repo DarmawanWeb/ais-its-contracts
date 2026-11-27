@@ -305,6 +305,7 @@ describe('DatabaseModule', () => {
     });
     const attempts = { ab: 0, ba: 0 };
     const errors: unknown[] = [];
+    const reruns: string[] = [];
     const transfer = (key: 'ab' | 'ba', first: string, second: string) =>
       withTransaction(
         pool,
@@ -329,9 +330,18 @@ describe('DatabaseModule', () => {
             throw error;
           }
         },
-        { retries: 2, retryDelayMs: 20 },
+        {
+          retries: 2,
+          retryDelayMs: 20,
+          onRetry: ({ retry, sqlState, delayMs }) => {
+            reruns.push(`${key}:${retry}:${sqlState}:${delayMs}`);
+          },
+        },
       );
     await Promise.all([transfer('ab', 'a', 'b'), transfer('ba', 'b', 'a')]);
+    // K7: the re-run is reported with its SQLSTATE (e.g. to count it).
+    expect(reruns).toHaveLength(1);
+    expect(reruns[0]).toMatch(/^(ab|ba):1:40P01:20$/);
     // The deadlock victim was a DrizzleQueryError wrapping 40P01, and was re-run.
     expect(errors).toHaveLength(1);
     expect(errors[0]).toBeInstanceOf(DrizzleQueryError);

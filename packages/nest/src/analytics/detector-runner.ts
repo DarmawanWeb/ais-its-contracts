@@ -28,6 +28,7 @@ import {
   type DurableHandlerSettings,
   durableHandlerSettings,
   type ExclusiveConsumerEvent,
+  type ExclusiveConsumerTransition,
   withDurableName,
 } from '../nats/event-handler.decorator.js';
 import {
@@ -64,6 +65,20 @@ const MAX_DURABLE_NAME_LENGTH = 64;
 
 /** Upper bound of the final publication of pending alerts at shutdown, ms. */
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 10_000;
+
+/** Log line of a deactivation of the position consumer, by reason. */
+const DEACTIVATION_MESSAGES: Readonly<
+  Record<ExclusiveConsumerTransition, (consumer: string) => string>
+> = {
+  stopped: (consumer) => `Stopping the active instance of ${consumer}`,
+  unpinned: (consumer) =>
+    `Another instance is active for ${consumer}: detector ticks paused`,
+  contact_lost: (consumer) =>
+    `No contact with the NATS server: gave up the active role of ${consumer}, detector ticks paused until a new pin`,
+  paused: (consumer) =>
+    `This process was paused: detector ticks of ${consumer} paused until the server confirms the pin`,
+  pinned: (consumer) => `Active instance of ${consumer}`,
+};
 
 /**
  * Wires the Detector SDK to NATS (spec §18). At module init it discovers the
@@ -155,6 +170,16 @@ export class DetectorRunner
       }
     }
     const restored = await this.engine.services.alerts.restoreFromPersistence();
+    // Without an exclusive consumer every instance is active from the start.
+    if (!exclusive) {
+      const unannounced = await this.engine.restoreUnannounced(
+        this.persistence?.loadUnannounced?.bind(this.persistence),
+      );
+      if (unannounced > 0)
+        this.logger.log(
+          `Queued ${unannounced} resolution(s) whose announcement may have been lost`,
+        );
+    }
     const warmed = await this.vessels.warmUp();
     // Seeds of the neighbour index; the backlog replaces them as it arrives.
     for (const state of this.vessels.values())
@@ -187,6 +212,11 @@ export class DetectorRunner
         ? {
             onActivated: (event) => this.activate(event),
             onDeactivated: (event) => this.deactivate(event),
+            // Ticks stop at once when the role is lost; onDeactivated waits
+            // for the handlers of the ended period first.
+            onStateChange: (state) => {
+              if (state !== 'active') this.registry.setActive(false);
+            },
           }
         : {},
     );
@@ -227,7 +257,12 @@ export class DetectorRunner
     const persistence = this.persistence;
     const activation = await this.engine.activate({
       loadOpen: persistence?.loadOpen?.bind(persistence),
+      loadUnannounced: persistence?.loadUnannounced?.bind(persistence),
     });
+    // The role may have been given up while the activation ran (a pause, a
+    // lost contact): stay inactive, the deactivation hook follows.
+    if (this.positions !== undefined && this.positions.state !== 'active')
+      this.registry.setActive(false);
     const { flushed } = activation;
     this.logger.log(
       `Active instance of ${event.consumer}: ` +
@@ -235,6 +270,9 @@ export class DetectorRunner
           ? `reloaded the open alerts (${activation.restored} open, ${activation.forgotten} ended elsewhere)`
           : 'kept the open alerts (no loadOpen)') +
         `, published ${flushed.published + flushed.resolutionsPublished} pending alert event(s)` +
+        (activation.unannounced > 0
+          ? `, queued ${activation.unannounced} unannounced resolution(s)`
+          : '') +
         `, re-seeded ${activation.vesselsReseeded} vessel state(s)`,
     );
     this.logUnpublished(flushed, 'on activation');
@@ -243,11 +281,7 @@ export class DetectorRunner
   /** Another instance took over, or this one stops. */
   private async deactivate(event: ExclusiveConsumerEvent): Promise<void> {
     const flushed = await this.engine.deactivate();
-    this.logger.log(
-      event.reason === 'stopped'
-        ? `Stopping the active instance of ${event.consumer}`
-        : `Another instance is active for ${event.consumer}: detector ticks paused`,
-    );
+    this.logger.log(DEACTIVATION_MESSAGES[event.reason](event.consumer));
     this.logUnpublished(flushed, 'on deactivation');
   }
 
@@ -378,8 +412,13 @@ export class DetectorRunner
         continue;
       let running = false;
       const timer = setInterval(() => {
+        if (running || this.stopping) return;
         // Only the active instance ticks (standbys would duplicate alerts).
-        if (running || this.stopping || !this.engine.active) return;
+        // Reading the role first notices a pause of the process (a stale
+        // role after SIGSTOP or a blocked event loop).
+        const role = this.positions?.state;
+        if (role === 'standby' || role === 'starting' || !this.engine.active)
+          return;
         running = true;
         this.engine
           .tick(this.engine.services.clock(), [entry.descriptor.id])

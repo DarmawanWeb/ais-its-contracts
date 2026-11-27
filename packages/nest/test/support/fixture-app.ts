@@ -191,6 +191,26 @@ export class FixtureController {
     return { republishedBy: principal.id };
   }
 
+  @RequirePlatformAdmin()
+  @ApiOperation({ summary: 'Rotate', description: 'Rotates a secret.' })
+  @Post('rotate')
+  @HttpCode(202)
+  rotate(): { readonly rotated: true } {
+    return { rotated: true };
+  }
+
+  @RequirePlatformAdmin()
+  @ApiOperation({
+    summary: 'Purge',
+    description:
+      'Purges a cache. Super admins only: other users get 403 PLATFORM_ADMIN_REQUIRED.',
+  })
+  @Post('purge')
+  @HttpCode(202)
+  purge(): { readonly purged: true } {
+    return { purged: true };
+  }
+
   @AllowApiKey('ais:ingest')
   @RequirePermissions('telemetry:write')
   @Post('ingest')

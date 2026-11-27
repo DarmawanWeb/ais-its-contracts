@@ -21,8 +21,10 @@ import * as z from 'zod';
 
 import { DOCS_PATH, OPENAPI_JSON_PATH } from './global-prefix.js';
 import {
+  API_KEY_SCOPES_EXTENSION,
   PLATFORM_ADMIN_DESCRIPTION,
   PLATFORM_ADMIN_ROLES_EXTENSION,
+  PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION,
   SECURITY_SCHEMES,
 } from './openapi-security.js';
 
@@ -144,9 +146,26 @@ export function addProblemResponses(document: OpenAPIObject): OpenAPIObject {
 }
 
 /**
- * Adds {@link PLATFORM_ADMIN_DESCRIPTION} to the description of every
- * operation that requires a platform administrator (`@RequirePlatformAdmin`,
- * `x-required-roles: ["super_admin"]`), keeping its own description first.
+ * The platform administrator sentence that matches what the `AuthGuard`
+ * does on an operation: {@link PLATFORM_ADMIN_DESCRIPTION} when it accepts
+ * API keys (`x-api-key-scopes`, from `@AllowApiKey`), else
+ * {@link PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION} (`401
+ * INVALID_API_KEY` for a key).
+ */
+export function platformAdminDescriptionOf(operation: object): string {
+  const scopes: unknown = Reflect.get(operation, API_KEY_SCOPES_EXTENSION);
+  return Array.isArray(scopes) && scopes.length > 0
+    ? PLATFORM_ADMIN_DESCRIPTION
+    : PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION;
+}
+
+/**
+ * Adds the platform administrator sentence ({@link platformAdminDescriptionOf})
+ * to the description of every operation that requires a platform
+ * administrator (`@RequirePlatformAdmin`, `x-required-roles:
+ * ["super_admin"]`), keeping its own description first. An operation whose
+ * own description already names `PLATFORM_ADMIN_REQUIRED` keeps it as it
+ * is (a service's own wording).
  */
 export function addPlatformAdminDescriptions(
   document: OpenAPIObject,
@@ -160,11 +179,9 @@ export function addPlatformAdminDescriptions(
       ];
       if (!Array.isArray(roles) || !roles.includes('super_admin')) continue;
       const own = operation.description ?? '';
-      if (own.includes(PLATFORM_ADMIN_DESCRIPTION)) continue;
-      operation.description =
-        own === ''
-          ? PLATFORM_ADMIN_DESCRIPTION
-          : `${own}\n\n${PLATFORM_ADMIN_DESCRIPTION}`;
+      if (own.includes('PLATFORM_ADMIN_REQUIRED')) continue;
+      const sentence = platformAdminDescriptionOf(operation);
+      operation.description = own === '' ? sentence : `${own}\n\n${sentence}`;
     }
   }
   return document;

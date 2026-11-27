@@ -26,6 +26,26 @@ export interface TransactionOptions {
    * not collide again in lockstep.
    */
   readonly retryDelayMs?: number | ((retry: number) => number) | undefined;
+  /**
+   * Called for every re-run, after the rollback and before the pause (log
+   * or count them, e.g. a counter by `sqlState`). An exception it throws is
+   * ignored: it never changes the outcome of the transaction.
+   */
+  readonly onRetry?: ((retry: TransactionRetry) => void) | undefined;
+}
+
+/** A re-run of a transaction (see {@link TransactionOptions.onRetry}). */
+export interface TransactionRetry {
+  /** Number of this re-run: 1 for the first. */
+  readonly retry: number;
+  /** Most re-runs of this call (`TransactionOptions.retries`). */
+  readonly retries: number;
+  /** SQLSTATE of the failed attempt: `40001` (serialization failure) or `40P01` (deadlock). */
+  readonly sqlState: string;
+  /** Pause before the re-run, ms. */
+  readonly delayMs: number;
+  /** Error of the failed attempt (as thrown by `fn`, possibly drizzle-wrapped). */
+  readonly error: unknown;
 }
 
 /** SQLSTATEs worth retrying a transaction for. */
@@ -85,6 +105,7 @@ export async function withTransaction<T>(
   for (let attempt = 0; ; attempt += 1) {
     const client = await pool.connect();
     let broken = false;
+    let failure: { error: unknown; sqlState: string } | undefined;
     try {
       await client.query(beginStatement(options));
       const result = await fn(client);
@@ -94,11 +115,24 @@ export async function withTransaction<T>(
       await client.query('ROLLBACK').catch(() => {
         broken = true;
       });
-      if (!RETRYABLE_SQLSTATES.has(sqlStateOf(error)) || attempt >= retries)
+      const sqlState = sqlStateOf(error);
+      if (
+        sqlState === undefined ||
+        !RETRYABLE_SQLSTATES.has(sqlState) ||
+        attempt >= retries
+      )
         throw error;
+      failure = { error, sqlState };
     } finally {
       client.release(broken);
     }
-    await sleep(retryDelayOf(options, attempt + 1));
+    const retry = attempt + 1;
+    const delayMs = retryDelayOf(options, retry);
+    try {
+      options.onRetry?.({ retry, retries, delayMs, ...failure });
+    } catch {
+      // A failing listener does not change the outcome of the transaction.
+    }
+    await sleep(delayMs);
   }
 }

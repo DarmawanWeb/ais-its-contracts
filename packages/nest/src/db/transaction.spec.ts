@@ -2,7 +2,7 @@ import { DrizzleQueryError } from 'drizzle-orm/errors';
 import type { Pool, PoolClient } from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import { withTransaction } from './transaction.js';
+import { type TransactionRetry, withTransaction } from './transaction.js';
 
 /** A pool whose clients record their statements and releases. */
 function fakePool(): {
@@ -139,5 +139,92 @@ describe('withTransaction retries (CORE-2)', () => {
     const elapsed = performance.now() - startedAt;
     expect(elapsed).toBeGreaterThanOrEqual(9);
     expect(elapsed).toBeLessThan(500);
+  });
+});
+
+describe('withTransaction onRetry (K7)', () => {
+  const serializationFailure = (): Error =>
+    new DrizzleQueryError(
+      'update vessels set …',
+      [],
+      Object.assign(new Error('could not serialize access'), {
+        code: '40001',
+      }),
+    );
+
+  it('reports every re-run with its number, SQLSTATE and pause, after the rollback', async () => {
+    const { pool, statements } = fakePool();
+    const retries: TransactionRetry[] = [];
+    const statementsAtRetry: number[] = [];
+    let attempts = 0;
+    const result = await withTransaction(
+      pool,
+      () => {
+        attempts += 1;
+        if (attempts === 1) return Promise.reject(deadlock());
+        if (attempts === 2) return Promise.reject(serializationFailure());
+        return Promise.resolve('done');
+      },
+      {
+        retries: 3,
+        retryDelayMs: (retry) => retry * 5,
+        onRetry: (retry) => {
+          retries.push(retry);
+          statementsAtRetry.push(statements.length);
+        },
+      },
+    );
+    expect(result).toBe('done');
+    expect(
+      retries.map(({ retry, retries: most, sqlState, delayMs }) => ({
+        retry,
+        most,
+        sqlState,
+        delayMs,
+      })),
+    ).toEqual([
+      { retry: 1, most: 3, sqlState: '40P01', delayMs: 5 },
+      { retry: 2, most: 3, sqlState: '40001', delayMs: 10 },
+    ]);
+    expect(retries[1]?.error).toBeInstanceOf(DrizzleQueryError);
+    // Called after each ROLLBACK, before the next BEGIN.
+    expect(statementsAtRetry).toEqual([2, 4]);
+  });
+
+  it('is not called for the last failure, for other errors or without retries', async () => {
+    const calls: number[] = [];
+    const onRetry = (retry: TransactionRetry) => {
+      calls.push(retry.retry);
+    };
+    const exhausted = await attemptsUntilSuccess(deadlock, {
+      retries: 1,
+      retryDelayMs: 0,
+      onRetry,
+    });
+    expect(exhausted.attempts).toBe(2);
+    expect(calls).toEqual([1]);
+    calls.length = 0;
+    await attemptsUntilSuccess(
+      () => Object.assign(new Error('unique'), { code: '23505' }),
+      { retries: 3, onRetry },
+    );
+    await attemptsUntilSuccess(deadlock, { onRetry });
+    expect(calls).toEqual([]);
+  });
+
+  it('never lets a failing listener change the outcome', async () => {
+    const { attempts, outcome } = await attemptsUntilSuccess(
+      deadlock,
+      {
+        retries: 2,
+        retryDelayMs: 0,
+        onRetry: () => {
+          throw new Error('metrics registry unavailable');
+        },
+      },
+      2,
+    );
+    expect(attempts).toBe(3);
+    expect(outcome).toBe('done');
   });
 });

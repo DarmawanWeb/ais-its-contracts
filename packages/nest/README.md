@@ -694,11 +694,13 @@ timeout; drizzle (`drizzle-orm/node-postgres`, pass `schema` for relational quer
 `database`. On init it waits for the database (bounded retries) and applies the migrations
 **before the port opens**.
 
-- `withTransaction(pool, async (client) => …, { isolationLevel?, readOnly?, retries?, retryDelayMs? })`
+- `withTransaction(pool, async (client) => …, { isolationLevel?, readOnly?, retries?, retryDelayMs?, onRetry? })`
   — retries serialization failures (`40001`) and deadlocks (`40P01`) when `retries > 0`, also when
   drizzle wrapped them (`DrizzleQueryError`: run drizzle on the transaction's client,
   `drizzle({ client })`); between attempts the client is released and the retry waits
-  `retryDelayMs` (a number or `(retry) => ms`, default random 10–50 ms).
+  `retryDelayMs` (a number or `(retry) => ms`, default random 10–50 ms). `onRetry({ retry,
+retries, sqlState, delayMs, error })` is called for every re-run (after the rollback, before
+  the pause), e.g. to count re-runs by SQLSTATE; an exception it throws never changes the outcome.
 - SQLSTATEs: `sqlStateOf(error)` follows the `cause` chain (drizzle wraps driver errors) and
   returns the 5-character code; `isUniqueViolation(error, constraint?)`; `PG_SQLSTATES`
   (`UNIQUE_VIOLATION`, `FOREIGN_KEY_VIOLATION`, `CHECK_VIOLATION`, `NOT_NULL_VIOLATION`,
@@ -753,10 +755,15 @@ CONCURRENTLY`). Services never run `CREATE EXTENSION`: the infrastructure create
 ## NATS JetStream (`./nats`)
 
 ```ts
-NatsModule.forRoot({ streams?: StreamName[], connectTimeoutMs?, requestTimeoutMs?, drainTimeoutMs?, minMaxPayloadBytes? })
+NatsModule.forRoot({ streams?: StreamName[], connectTimeoutMs?, requestTimeoutMs?, drainTimeoutMs?, connectionDrainTimeoutMs?, minMaxPayloadBytes? })
 ```
 
-The connection reconnects forever with jittered backoff and drains on shutdown.
+The connection reconnects forever with jittered backoff and drains on shutdown, for at most
+`connectionDrainTimeoutMs` (default `DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS`, 5 s) and never longer
+than what is left of `SHUTDOWN_TIMEOUT_MS` less 1 s: a server that accepts the connection but
+never answers (a paused container) no longer turns `SIGTERM` into the forced exit
+(`Graceful shutdown exceeded … ms, exiting`, exit 1); the connection is closed with the warning
+`NATS drain did not finish within … ms (server not answering)`.
 `NatsClient.maxPayloadBytes()` is the server's `max_payload` (`undefined` before connect); the
 kit logs a warning at connect when it is below `minMaxPayloadBytes` (default 4 MiB, the platform's
 `infra/nats/nats.conf`; set the option to accept a smaller server deliberately).
@@ -857,12 +864,36 @@ async onPosition(event: ConsumerEnvelope<'emission-positions'>, context: EventCo
   several replicas are fine.
 - **Activation hooks.** Providers with `@EventHandler` methods may implement
   `ExclusiveConsumerListener` (`onConsumerActivated(event)`, `onConsumerDeactivated(event)`, with
-  `{ consumer, stream, pinId, previous, reason: 'pinned' | 'unpinned' | 'stopped' }`). Dispatch
-  waits until `onConsumerActivated` settled, so state reloaded there is complete before the first
-  message of the new pin; a failing hook naks with backoff (dead-letters the message on its last
-  delivery). `aisits_events_consumer_activations_total{consumer}` counts activations.
+  `{ consumer, stream, pinId, previous, reason: 'pinned' | 'unpinned' | 'stopped' | 'contact_lost' | 'paused' }`).
+  Dispatch waits until `onConsumerActivated` settled, so state reloaded there is complete before
+  the first message of the new pin; a failing hook naks with backoff (dead-letters the message on
+  its last delivery). `aisits_events_consumer_activations_total{consumer}` counts activations.
+- **Cut off from NATS: the pin is given up.** The server unpins an instance `pinnedTtlMs` after
+  the last pull carrying its pin reached it. An active instance that has had no confirmed contact
+  with the server (a message, an idle heartbeat, a pull status) for
+  `pinContactTimeoutMs(pinnedTtlMs)` = `max(2 × heartbeat, pinnedTtlMs − expiry − heartbeat)` —
+  half the TTL from 3 to 90 s, 15 s at the default 30 s — deactivates itself (`contact_lost`:
+  `onConsumerDeactivated` runs after the handlers of the period, the Detector SDK's ticks stop at
+  once) and subscribes afresh: it becomes active again only through a **new** pin (it releases
+  the old one first if the server still holds it). Every contact belongs to a pull at most one
+  expiry old, so the server cannot have pinned another instance before this bound, with one
+  heartbeat interval of margin for transit (5 s at the default TTL); a healthy instance hears from
+  the server every heartbeat and gives its pin up only after missing about three in a row (slow
+  handlers and event-loop stalls well below the bound never trigger it). Below a TTL of 3 000 ms
+  the bound cannot be kept (the kit warns at start).
+- **Paused process: nothing stale is dispatched.** When the process did not run for longer than
+  the same bound (`SIGSTOP`, a blocked event loop; measured with the monotonic clock before every
+  dispatch, on every server contact, by a watchdog and when `state` is read), the instance stops
+  acting as active (`paused`): what it buffered meanwhile is **returned** (`nak` after
+  `RETURNED_MESSAGE_DELAY_MS` = 1 s, `aisits_events_consumed_total{outcome="returned"}`, not a
+  handler failure; dead-lettered instead on its last delivery), and the server is asked which
+  instance it pins. If it still (or again) pins this one, `onConsumerActivated` runs again —
+  `previous === pinId` for the same pin — before any message is dispatched; otherwise it
+  subscribes afresh as a standby. A handler that was already running when the process stopped
+  finishes after the pause (the deactivation hook waits for it).
 - **State.** `EventConsumers.state(name)` and `ConsumerHealth.state` report `starting`,
-  `active`, `standby` or `shared` (not exclusive).
+  `active`, `standby` or `shared` (not exclusive). Reading the runner's `state` first checks for a
+  pause, so a timer that fires right after `SIGCONT` sees `standby`, not a stale `active`.
 
 ### Ordered (ephemeral) consumers — fan-out, every instance gets every message
 
@@ -1025,7 +1056,12 @@ platform-wide operations (e.g. `POST /vessels/:id/republish`): it combines with
 `@RequirePermissions()`, API keys are always refused, and a handler-level `@Public()` or
 `@RequirePlatformAdmin()` wins over the controller level. The OpenAPI operation gets
 `x-required-roles: ['super_admin']` and a sentence in its description (added by
-`buildOpenApiDocument`, so `exportOpenApi` documents it).
+`buildOpenApiDocument`, so `exportOpenApi` documents it) that matches what the guards answer on
+that route: `PLATFORM_ADMIN_DESCRIPTION` ("other users and API keys get 403
+PLATFORM_ADMIN_REQUIRED") when it accepts API keys (`@AllowApiKey`, `x-api-key-scopes`), else
+`PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION` ("other users get 403 PLATFORM_ADMIN_REQUIRED, and
+API keys are not accepted on this route (401 INVALID_API_KEY)"). An operation whose own
+description already names `PLATFORM_ADMIN_REQUIRED` keeps its own wording.
 
 - Access tokens: EdDSA, `iss`/`aud` from config, 30 s clock tolerance, contracts claim schema;
   keys from the remote JWKS (`AUTH_JWKS_URL`) unless `keyResolver` is given (the auth service plugs
@@ -1048,9 +1084,13 @@ platform-wide operations (e.g. `POST /vessels/:id/republish`): it combines with
 
 ## Audit, health, metrics, tracing, internal HTTP
 
-- **Audit** (`./audit`): `AuditService.record({ action: 'vessel.update', targetType, targetId, meta, orgId? }, principal?, request?)`
+- **Audit** (`./audit`): `AuditService.record({ action: 'vessel.update', targetType, targetId, meta, orgId?, labels? }, principal?, request?)`
   publishes `audit.recorded.v1` to `audit.v1.<SERVICE_NAME>`; best effort (resolves `false` and
-  counts `aisits_audit_failures_total` instead of throwing). `AuditModule` is global: import it
+  counts `aisits_audit_failures_total` instead of throwing). `labels` (`{ actorName?, actorEmail?,
+orgName?, targetLabel? }`, each `string | null`, cut to `AUDIT_LABEL_MAX_LENGTH` = 200) are the
+  names known when the record is written, e.g. `{ targetLabel: vessel.name }` in the transaction of
+  a vessel change, so the audit log shows the name of the time even after a rename or deletion;
+  without them the payload is unchanged (the audit log resolves names itself). `AuditModule` is global: import it
   once in `AppModule`. Needs `NatsModule`. Security-relevant records that must not be lost go
   through the transactional outbox instead:
   `await audit.enqueue(client, entry, principal?, request?, { table? })` inside the transaction
@@ -1138,9 +1178,26 @@ enabled detectors' occurrences, so what the previous instance raised or resolved
 and not raised twice), the vessel states are re-seeded from the Valkey mirror (best effort) and
 every detector's `onActivated(context, call)` runs (drop local state such as pair trackers or
 streaks). Then `context.isActive()` turns `true`. A failing `loadOpen` fails the activation, which
-is retried with the next message. Losing the pin (another instance took over) or a graceful stop
-runs the reverse: ticks pause, running calls settle, pending resolutions are published, then
-`onDeactivated`. **Ticks run only on the active instance**; `onZoneChanged` / `onVesselChanged`
+is retried with the next message. Losing the pin (another instance took over), giving it up (cut
+off from NATS, or after a pause of the process — see _Exclusive consumers_) or a graceful stop
+runs the reverse: ticks stop **at once** (the role change is seen before the handlers of the
+period settle; a tick that fires right after a pause re-checks the role first), running calls
+settle, pending resolutions are published, then `onDeactivated`. After a pause the instance
+becomes active again only once the server confirmed its pin, with the full activation (reload)
+before any position is dispatched.
+
+**Resolutions a crash would lose.** A resolution waits in memory until the alert cooldown since
+the last raise ended (or is cancelled by a re-raise within it). To announce it even when the
+process crashes in that window, give the persistence hook `loadUnannounced()` and
+`onResolutionPublished({ dedupKey, alertId, eventId })`: store `AlertResolution.eventId` in
+`onResolved`, mark the row announced in `onResolutionPublished`, and return the resolved rows with
+an event id and no announcement mark (`UnannouncedResolution`: the occurrence as it ended —
+`publishedAt` = its last published raise —, `resolvedAt`, `reason`, `data`, `eventId`) from
+`loadUnannounced`. The runner queues them on every activation (at startup without an exclusive
+consumer; `DetectorActivation.unannounced` counts them) with their stored event id, so consumers
+deduplicate a second announcement; they go out when the rest of the cooldown has passed, and a
+re-raise within it reopens the occurrence as before. Both hooks are optional: without them a crash
+within the cooldown still loses the announcement. **Ticks run only on the active instance**; `onZoneChanged` / `onVesselChanged`
 run on every instance, so check `context.isActive()` before raising or resolving there. A
 graceful stop releases the pin at once, so services may run two or more replicas with **rolling
 updates** (no `Recreate` strategy needed). Without `loadOpen` a takeover keeps the standby's own

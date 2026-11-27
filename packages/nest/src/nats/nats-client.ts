@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import {
   Inject,
   Injectable,
@@ -14,13 +16,36 @@ import {
 import { connect, type NatsConnection } from '@nats-io/transport-node';
 
 import { errorMessage, retryUntilDeadline } from '../common/retry.js';
+import { remainingShutdownMs } from '../common/shutdown-deadline.js';
 import { InjectConfig } from '../config/config.module.js';
 import type { BaseConfig } from '../config/env-schema.js';
 import {
+  DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS,
   DEFAULT_MIN_MAX_PAYLOAD_BYTES,
   NATS_OPTIONS,
   type NatsModuleOptions,
 } from './nats.options.js';
+
+/** Part of the shutdown budget left to the hooks after the NATS drain, ms. */
+const SHUTDOWN_RESERVE_MS = 1000;
+
+/** Longest wait for `close()` after a failed or timed-out drain, ms. */
+const CLOSE_TIMEOUT_MS = 1000;
+
+/**
+ * How long the connection drain at shutdown may take, ms: the configured
+ * bound (default {@link DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS}) or, when a
+ * shutdown deadline runs, what is left of it less 1 s, whichever is
+ * smaller (never negative).
+ */
+export function connectionDrainBoundMs(
+  configuredMs: number | undefined,
+  remainingMs: number | undefined,
+): number {
+  const configured = configuredMs ?? DEFAULT_CONNECTION_DRAIN_TIMEOUT_MS;
+  if (remainingMs === undefined) return Math.max(0, configured);
+  return Math.max(0, Math.min(configured, remainingMs - SHUTDOWN_RESERVE_MS));
+}
 
 /** Thrown when the connection is used before `onModuleInit` connected it. */
 export class NatsNotConnectedError extends Error {
@@ -106,17 +131,36 @@ export class NatsClient implements OnModuleInit, OnApplicationShutdown {
     );
   }
 
-  /** Drains the connection (pending publishes are flushed). Idempotent. */
+  /**
+   * Drains the connection (pending publishes are flushed), for at most
+   * {@link connectionDrainBoundMs}; a drain that fails or does not finish
+   * in time closes the connection instead (warning). Idempotent.
+   */
   async onApplicationShutdown(): Promise<void> {
     const handles = this.handles;
     if (handles === undefined || handles.connection.isClosed()) return;
     this.connected = false;
-    try {
-      await handles.connection.drain();
-    } catch (error) {
-      this.logger.warn(`NATS drain failed: ${errorMessage(error)}`);
-      await handles.connection.close().catch(() => undefined);
-    }
+    const boundMs = connectionDrainBoundMs(
+      this.options.connectionDrainTimeoutMs,
+      remainingShutdownMs(),
+    );
+    const outcome = await Promise.race([
+      handles.connection.drain().then(
+        () => 'drained' as const,
+        (error: unknown) => error,
+      ),
+      sleep(boundMs, 'timeout' as const, { ref: false }),
+    ]);
+    if (outcome === 'drained') return;
+    this.logger.warn(
+      outcome === 'timeout'
+        ? `NATS drain did not finish within ${boundMs} ms (server not answering): closing the connection, unflushed publishes are lost`
+        : `NATS drain failed: ${errorMessage(outcome)}`,
+    );
+    await Promise.race([
+      handles.connection.close().catch(() => undefined),
+      sleep(CLOSE_TIMEOUT_MS, undefined, { ref: false }),
+    ]);
   }
 
   private current(): NatsHandles {

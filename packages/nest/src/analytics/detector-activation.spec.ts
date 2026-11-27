@@ -221,3 +221,52 @@ describe('DetectorTestHarness failover (activate / deactivate)', () => {
     );
   });
 });
+
+describe('activation announces resolutions a crashed instance left unannounced (K6)', () => {
+  it('queues them after the reload and publishes them once their cooldown ended', async () => {
+    const detector = new SpeedDetector();
+    const marked: string[] = [];
+    let failing = false;
+    const lost = {
+      alert: stored(A, { domain: 'safety', methodId: 'safety.ews' }),
+      resolvedAt: new Date('2026-01-01T00:01:00.000Z'),
+      reason: 'slowed down',
+      eventId: '018f2b5e-0000-7000-8000-0000000000e1',
+    };
+    const persistence: AlertPersistence = {
+      loadOpen: () => Promise.resolve([]),
+      loadUnannounced: () =>
+        failing
+          ? Promise.reject(new Error('db down'))
+          : Promise.resolve([lost]),
+      onResolutionPublished: (resolution) => {
+        marked.push(resolution.eventId);
+        return Promise.resolve();
+      },
+    };
+    const harness = DetectorTestHarness.create({
+      detectors: [detector],
+      persistence,
+      now: new Date('2026-01-01T00:02:00.000Z'),
+    });
+    await harness.deactivate();
+    const activation = await harness.activate();
+    expect(activation.unannounced).toBe(1);
+    // Cooldown (10 min) since the raise published at 00:00 not over yet.
+    await harness.maintain();
+    expect(harness.resolvedEvents).toEqual([]);
+    harness.advance(9 * 60_000);
+    await harness.maintain();
+    expect(harness.resolvedEvents).toMatchObject([
+      { id: lost.eventId, mmsi: A, reason: 'slowed down' },
+    ]);
+    expect(marked).toEqual([lost.eventId]);
+
+    // A failing loadUnannounced does not fail the activation.
+    failing = true;
+    await harness.deactivate();
+    const again = await harness.activate();
+    expect(again.unannounced).toBe(0);
+    expect(harness.active).toBe(true);
+  });
+});

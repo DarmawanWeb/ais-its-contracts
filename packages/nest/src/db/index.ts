@@ -102,6 +102,7 @@ export {
 export {
   type IsolationLevel,
   type TransactionOptions,
+  type TransactionRetry,
   withTransaction,
 } from './transaction.js';
 /**

@@ -35,6 +35,7 @@ export {
   type OpenApiOptions,
   OpenApiSecurityError,
   type OpenApiTag,
+  platformAdminDescriptionOf,
   PROBLEM_DETAILS_SCHEMA_NAME,
   REFRESH_COOKIE_SECURITY_SCHEME,
   serializeOpenApiDocument,
@@ -42,8 +43,10 @@ export {
   writeOpenApiDocument,
 } from './openapi.js';
 export {
+  API_KEY_SCOPES_EXTENSION,
   PLATFORM_ADMIN_DESCRIPTION,
   PLATFORM_ADMIN_ROLES_EXTENSION,
+  PLATFORM_ADMIN_WITHOUT_API_KEYS_DESCRIPTION,
   SECURITY_SCHEMES,
 } from './openapi-security.js';
 export {

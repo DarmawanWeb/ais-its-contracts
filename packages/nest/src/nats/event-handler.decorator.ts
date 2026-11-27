@@ -93,11 +93,24 @@ export interface ExclusiveConsumerOptions {
 }
 
 /**
- * Why an exclusive consumer instance changed role: `pinned` (it became the
- * active instance), `unpinned` (another instance took over) or `stopped`
- * (graceful stop; the pin is released next).
+ * Why an exclusive consumer instance changed role:
+ *
+ * - `pinned` — it became the active instance (also again, for the same pin,
+ *   after a pause the server confirmed: `previous === pinId`);
+ * - `unpinned` — the server said another instance took over;
+ * - `stopped` — graceful stop (the pin is released next);
+ * - `contact_lost` — no confirmed contact with the server for so long that
+ *   the server may have pinned another instance (cut off from NATS): it
+ *   gives its pin up and becomes active again only through a new pin;
+ * - `paused` — the process did not run for that long (`SIGSTOP`, a blocked
+ *   event loop): it stops dispatching until the server confirms the pin.
+ *
+ * `contact_lost` and `paused` were added after kit 0.3.0 (see
+ * `pinContactTimeoutMsFor`); hooks that compare `reason` with `'stopped'`
+ * keep working.
  */
-export type ExclusiveConsumerTransition = 'pinned' | 'unpinned' | 'stopped';
+export type ExclusiveConsumerTransition =
+  'pinned' | 'unpinned' | 'stopped' | 'contact_lost' | 'paused';
 
 /** Passed to the activation hooks of an exclusive consumer. */
 export interface ExclusiveConsumerEvent {
@@ -131,9 +144,10 @@ export interface ExclusiveConsumerEvent {
  *   in place before the first message of the active period. When it
  *   rejects, those messages are nak'd with backoff (redelivered, never
  *   lost) and the hook runs again on the next message.
- * - `onConsumerDeactivated` when another instance took over (after the
- *   handlers of the ended period settled) or before a graceful stop
- *   releases the pin (flush state here). Errors are logged and ignored.
+ * - `onConsumerDeactivated` when another instance took over, when this
+ *   instance gave its pin up (`contact_lost`, `paused`) — after the handlers
+ *   of the ended period settled — or before a graceful stop releases the
+ *   pin (flush state here). Errors are logged and ignored.
  *
  * @example
  * @Injectable()

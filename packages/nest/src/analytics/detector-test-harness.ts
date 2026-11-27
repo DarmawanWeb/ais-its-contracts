@@ -18,6 +18,7 @@ import {
   type AlertResolution,
   type AlertUpdate,
   type OpenAlert,
+  type UnannouncedResolution,
 } from './alert-emitter.js';
 import type {
   AnyDetector,
@@ -137,6 +138,9 @@ export class DetectorTestHarness {
   private readonly stepMs: number;
   /** The persistence hook's `loadOpen`, for {@link activate}. */
   private readonly loadOpen: (() => Promise<readonly OpenAlert[]>) | undefined;
+  /** The persistence hook's `loadUnannounced`, for {@link activate}. */
+  private readonly loadUnannounced:
+    (() => Promise<readonly UnannouncedResolution[]>) | undefined;
   private readonly lastPositions = new Map<number, VesselPosition>();
 
   private constructor(options: DetectorTestHarnessOptions) {
@@ -160,6 +164,9 @@ export class DetectorTestHarness {
         await persistence?.onResolved?.(resolution);
       },
       loadOpen: async () => (await persistence?.loadOpen?.()) ?? [],
+      onResolutionPublished: async (resolution) => {
+        await persistence?.onResolutionPublished?.(resolution);
+      },
     };
     this.services = {
       vessels: new VesselStateStore({ ...options.vesselState, clock: now }),
@@ -211,6 +218,7 @@ export class DetectorTestHarness {
       detectorMetrics,
     );
     this.loadOpen = persistence?.loadOpen?.bind(persistence);
+    this.loadUnannounced = persistence?.loadUnannounced?.bind(persistence);
   }
 
   /**
@@ -313,7 +321,10 @@ export class DetectorTestHarness {
    * `isActive()` is `true` and ticks run again.
    */
   activate(): Promise<DetectorActivation> {
-    return this.engine.activate({ loadOpen: this.loadOpen });
+    return this.engine.activate({
+      loadOpen: this.loadOpen,
+      loadUnannounced: this.loadUnannounced,
+    });
   }
 
   /**

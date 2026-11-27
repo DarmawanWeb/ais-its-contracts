@@ -17,6 +17,13 @@ export type ConsumeOutcome =
   | 'invalid'
   /** Event type not handled by this consumer: acknowledged. */
   | 'skipped'
+  /**
+   * Exclusive consumer: not dispatched because this instance was not the
+   * confirmed active one for it (another instance took over, the pin was
+   * given up, or a pause left it unconfirmed); `nak` for redelivery, not a
+   * handler failure.
+   */
+  | 'returned'
   /** Ordered consumer handler failure (no redelivery possible). */
   | 'error'
   /** Handled (ordered consumers do not acknowledge). */

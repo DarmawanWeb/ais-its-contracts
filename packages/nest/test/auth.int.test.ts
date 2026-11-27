@@ -270,6 +270,31 @@ describe('auth guard (global default-deny)', () => {
     );
   });
 
+  it('documents what the guards answer on a platform-admin route without @AllowApiKey: 401 INVALID_API_KEY for keys (K4)', async () => {
+    const rotate = (headers: Record<string, string>) =>
+      app.inject({ method: 'POST', url: '/api/v2/fixtures/rotate', headers });
+    const key = await rotate({ 'x-api-key': ingestKey });
+    expect(key.statusCode).toBe(401);
+    expect(key.json()).toMatchObject({ code: 'INVALID_API_KEY' });
+    const orgAdmin = await jwt.sign({ roles: ['org_admin'], orgId: ORG_ID });
+    const user = await rotate({ authorization: `Bearer ${orgAdmin}` });
+    expect(user.statusCode).toBe(403);
+    expect(user.json()).toMatchObject({ code: 'PLATFORM_ADMIN_REQUIRED' });
+
+    const document = (
+      await app.inject({ method: 'GET', url: '/openapi.json' })
+    ).json<{
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    }>();
+    expect(document.paths['/api/v2/fixtures/rotate']?.post?.description).toBe(
+      'Rotates a secret.\n\nRequires a platform administrator (super_admin); other users get 403 PLATFORM_ADMIN_REQUIRED, and API keys are not accepted on this route (401 INVALID_API_KEY).',
+    );
+    // A service's own sentence naming the code is kept as it is.
+    expect(document.paths['/api/v2/fixtures/purge']?.post?.description).toBe(
+      'Purges a cache. Super admins only: other users get 403 PLATFORM_ADMIN_REQUIRED.',
+    );
+  });
+
   it('still lets users with the permission call @AllowApiKey routes', async () => {
     const token = await jwt.sign({ roles: ['fleet_manager'], orgId: ORG_ID });
     const response = await app.inject({

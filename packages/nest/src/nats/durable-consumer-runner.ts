@@ -15,10 +15,11 @@ import {
   ensureDurableConsumer,
 } from './consumer-config.js';
 import { decideFailure, retryDelayMs } from './delivery-policy.js';
-import type {
-  DurableHandlerSettings,
-  ExclusiveConsumerEvent,
-  ExclusiveConsumerTransition,
+import {
+  DEFAULT_PINNED_TTL_MS,
+  type DurableHandlerSettings,
+  type ExclusiveConsumerEvent,
+  type ExclusiveConsumerTransition,
 } from './event-handler.decorator.js';
 import { DLQ_HEADERS, headerValue } from './headers.js';
 import {
@@ -136,6 +137,18 @@ export function pinContactTimeoutMsFor(
     2 * heartbeat,
     settings.exclusive.pinnedTtlMs - expires - heartbeat,
   );
+}
+
+/**
+ * {@link pinContactTimeoutMsFor} of an exclusive consumer with this
+ * `pinnedTtlMs` (default 30 s → 15 s): how long an active instance may go
+ * without confirmed contact with the NATS server, or without running at all
+ * (a pause), before it gives its pin up (`contact_lost`, `paused`).
+ */
+export function pinContactTimeoutMs(
+  pinnedTtlMs: number = DEFAULT_PINNED_TTL_MS,
+): number {
+  return pinContactTimeoutMsFor({ exclusive: { group: '', pinnedTtlMs } }) ?? 0;
 }
 
 /** `true` for a subject with a `*` or `>` token. */
@@ -345,8 +358,15 @@ export class DurableConsumerRunner {
     return this.settings.definition.durableName;
   }
 
-  /** Role of this instance (see {@link ConsumerState}). */
+  /**
+   * Role of this instance (see {@link ConsumerState}). Reading it first
+   * checks for a pause of the process (see {@link pinContactTimeoutMsFor}),
+   * so a timer that fires right after a pause never acts on a stale
+   * `active`: the instance is then a `standby` until the server confirms
+   * the pin.
+   */
   get state(): ConsumerState {
+    this.noteRun();
     return this.currentState;
   }
 
@@ -585,7 +605,8 @@ export class DurableConsumerRunner {
    */
   private noteRun(): void {
     const bound = this.contactTimeoutMs;
-    if (bound === undefined) return;
+    // Not started yet (a slow boot is no pause).
+    if (bound === undefined || this.watchdog === undefined) return;
     const now = this.clock();
     const silence = now - this.lastRunAt;
     this.lastRunAt = now;
@@ -621,14 +642,13 @@ export class DurableConsumerRunner {
     this.watchdog.unref();
   }
 
+  /** Gives the pin up when an active instance heard nothing from the server for longer than the bound. */
   private checkContact(): void {
     const bound = this.contactTimeoutMs;
-    if (
-      bound === undefined ||
-      this.isStopping() ||
-      this.confirming ||
-      this.currentState !== 'active'
-    )
+    if (bound === undefined) return;
+    // A pause right before this check is a pause, not a contact loss.
+    this.noteRun();
+    if (this.isStopping() || this.confirming || this.currentState !== 'active')
       return;
     const silence = this.clock() - (this.lastContactAt ?? this.lastRunAt);
     if (silence > bound) this.onContactLost(Math.round(silence));
@@ -736,9 +756,12 @@ export class DurableConsumerRunner {
   /**
    * `true` while a message that arrived with `ticket` may be dispatched:
    * this instance is the confirmed active one for its pin, in the period it
-   * arrived in.
+   * arrived in. Checks for a pause first: after `SIGCONT` the handler that
+   * was running may finish before any timer of this runner fires, and the
+   * next queued message must not be dispatched on the stale role.
    */
   private mayDispatch(ticket: DispatchTicket): boolean {
+    this.noteRun();
     return (
       !this.confirming &&
       this.currentState === 'active' &&

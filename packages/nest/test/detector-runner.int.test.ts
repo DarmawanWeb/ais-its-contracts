@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import {
   type AlertRaisedV1,
   AlertResolvedV1Schema,
@@ -38,6 +40,7 @@ import {
   waitFor,
 } from '../src/testing/index.js';
 import { testInfra, uniqueName } from './support/infra.js';
+import { startTcpLink } from './support/tcp-link.js';
 
 const MMSI = 400_000_000 + Math.floor(Math.random() * 500_000_000);
 const ORG = '018f2b5e-0000-7000-8000-0000000000aa';
@@ -485,13 +488,23 @@ describe('DetectorRunnerModule failover (two instances, one exclusive durable)',
   let producer: NestFastifyApplication;
   const apps: NestFastifyApplication[] = [];
 
-  async function startInstance(): Promise<NestFastifyApplication> {
+  async function startInstance(
+    options: {
+      /** Default: the test NATS server (direct connection). */
+      readonly natsUrl?: string;
+      readonly positions?: DurableConsumerDefinition;
+      readonly pinnedTtlMs?: number;
+    } = {},
+  ): Promise<NestFastifyApplication> {
     @Module({
       imports: [
-        NatsModule.forRoot({ streams: ['ALERTS'] }),
+        NatsModule.forRoot({ streams: ['ALERTS'], requestTimeoutMs: 2000 }),
         RedisModule.forRoot(),
         DetectorRunnerModule.forRoot({
-          positions: failoverPositions,
+          positions: options.positions ?? failoverPositions,
+          ...(options.pinnedTtlMs === undefined
+            ? {}
+            : { exclusive: { pinnedTtlMs: options.pinnedTtlMs } }),
           fleet: false,
           vesselState: { mirror: { keyPrefix: mirrorPrefix } },
           alertCooldownMs: 0,
@@ -502,7 +515,16 @@ describe('DetectorRunnerModule failover (two instances, one exclusive durable)',
       providers: [FailoverProbe],
     })
     class InstanceModule {}
-    const instance = await buildTestApp(InstanceModule, { config: config() });
+    const instance = await buildTestApp(InstanceModule, {
+      config:
+        options.natsUrl === undefined
+          ? config()
+          : createTestConfig(baseConfigSchema, {
+              SERVICE_NAME: 'surveillance',
+              NATS_URL: options.natsUrl,
+              REDIS_URL: testInfra().redisUrl,
+            }),
+    });
     apps.push(instance);
     return instance;
   }
@@ -595,4 +617,56 @@ describe('DetectorRunnerModule failover (two instances, one exclusive durable)',
       'aisits_detector_activations_total{outcome="completed"} 1',
     );
   });
+  it('stops ticking and deactivates the detectors of an instance cut off from NATS before another one is pinned (K1)', async () => {
+    const link = await startTcpLink(testInfra().natsUrl);
+    const positions: DurableConsumerDefinition = {
+      ...failoverPositions,
+      durableName: uniqueName('detector_cut_off'),
+    };
+    const Z = MMSI + 3;
+    try {
+      const t0 = Date.now();
+      // pinnedTtlMs 3000: the bound without server contact is 1.5 s.
+      const a = await startInstance({
+        natsUrl: link.url,
+        positions: { ...positions, filterSubjects: [subjects.aisPosition(Z)] },
+        pinnedTtlMs: 3000,
+      });
+      const probeA = a.get(FailoverProbe);
+      await publish(Z, 1.32, 105.32, new Date(t0));
+      await waitFor(() => probeA.ticks > 0, { timeoutMs: 15_000 });
+      const b = await startInstance({
+        positions: { ...positions, filterSubjects: [subjects.aisPosition(Z)] },
+        pinnedTtlMs: 3000,
+      });
+      const probeB = b.get(FailoverProbe);
+
+      const cutAt = performance.now();
+      link.hold();
+      await waitFor(() => probeA.calls.includes('deactivated'), {
+        timeoutMs: 5000,
+      });
+      const deactivatedAfter = performance.now() - cutAt;
+      expect(deactivatedAfter).toBeLessThan(2600);
+      const ticksAtDeactivation = probeA.ticks;
+      // After the pinned TTL the next position pins b, which ticks.
+      await sleep(Math.max(0, cutAt + 4000 - performance.now()));
+      await publish(Z, 1.33, 105.33, new Date(t0 + 1000));
+      await waitFor(
+        () => probeB.calls.some((call) => call.startsWith('activated')),
+        { timeoutMs: 15_000 },
+      );
+      await waitFor(() => probeB.ticks > 0);
+      // a never ticked again: never two active instances at once.
+      expect(probeA.ticks).toBe(ticksAtDeactivation);
+      expect(a.get(DetectorRegistry).active).toBe(false);
+      link.release();
+      await sleep(1000);
+      expect(probeA.ticks).toBe(ticksAtDeactivation);
+    } finally {
+      link.release();
+      for (const instance of apps.splice(0).reverse()) await instance.close();
+      await link.close();
+    }
+  }, 60_000);
 });
